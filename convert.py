@@ -67,8 +67,7 @@ def obci_create_edf_adc(bci_signals, sf, channels, user, gender, dts, birthday):
         processed = len(channel_data)
     return([header, signal_headers, signals, processed])
 
-working_dir = '/Volumes/Data/Storage/Dev/openbci-sd'
-# working_dir = '/path/to/openbci-sd'
+working_dir = '/path/to/openbci-sd'
 os.chdir(working_dir)
 
 file_name = os.path.join('data','OBCI-01.TXT')

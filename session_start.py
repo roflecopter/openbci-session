@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import closing
 import pyOpenBCI
 
-working_dir = '/Volumes/Data/Storage/Dev/openbci-psg' 
+working_dir = '/path/to/openbci-psg' 
 t_sleep = 1
 dbg = False
 board = pyOpenBCI.OpenBCICyton(port='/dev/cu.usbserial-D200PMQM', daisy=False)

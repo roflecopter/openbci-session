@@ -64,7 +64,7 @@ if dbg:
     # print(new_registers + registers2)
 
 # enable sdcard writing with 12H
-board.write_command('A')
+board.write_command('K')
 time.sleep(t_sleep * 5)
 
 res = board.ser.read_all().decode()

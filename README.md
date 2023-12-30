@@ -3,8 +3,8 @@ OpenBCI allows for gold-standard PSG (EEG, ECG etc) data collection and i use it
 
 # session_start.py
 Script to start OpenBCI session in a single click, usually for sleep EEG acquisiton purposes. 
-* Used to starts session with data saved on sd with desired sampling frequency (for greater than 250Hz modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) need to be flashed, otherwise it will always write with default 250Hz).
-* Saves session start timestamp and settings into sqlite file. Session info will be joined in sd_convert.py script
+* Used to start session with data saved on sd with desired sampling frequency (for greater than 250Hz modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) need to be flashed, otherwise it will always write with default 250Hz).
+* Saves session start timestamp and settings into sqlite file (data/sessions.db). Session info will be used in sd_convert.py script
 
 # sd_convert.py
 Script to convert OpenBCI SD card .TXT files to 

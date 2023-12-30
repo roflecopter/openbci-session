@@ -2,7 +2,19 @@ import numpy as np
 import datetime
 import math
 import os
+import json
 from pyedflib import highlevel
+import sqlite3
+from contextlib import closing
+
+working_dir = '/path/to/openbci-psg'
+sd_dir = '/Volumes/BCI'
+
+ADS1299_BITS = (2**23-1)
+V_Factor = 1000000 # uV
+def adc_v_bci(signal, ADS1299_VREF = 4.5):
+    k = ADS1299_VREF / ADS1299_BITS / ADS1299_GAIN * V_Factor
+    return signal * k
 
 def parseInt24Hex(hex_value):
     if len(hex_value) < 16:
@@ -67,20 +79,68 @@ def obci_create_edf_adc(bci_signals, sf, channels, user, gender, dts, birthday):
         processed = len(channel_data)
     return([header, signal_headers, signals, processed])
 
-working_dir = '/path/to/openbci-psg'
-os.chdir(working_dir)
+sessions = None
+session = None
+with closing(sqlite3.connect(os.path.join(working_dir, 'data','sessions.db'), timeout=10)) as con:
+    with con:
+        with closing(con.cursor()) as cur:
+            sql = 'SELECT * FROM Sessions'
+            cur.execute(sql)
+            sessions = cur.fetchall()
 
-file_name = os.path.join('data','OBCI-01.TXT')
-sf = 250
-user = 'User'
-gender = 'Male'; 
-birthday = '1980_01_01-12_00_00'
-brand = 'OpenBCI'
-device = 'Cyton'
-dts = datetime.datetime.now()
-bci_signals, stops = process_file(file_name)
-bci_signals = np.array(bci_signals)
-channels = {'F7-Fpz':2,'F8-Fpz':3}
+files = [file for file in os.listdir(sd_dir) if file.endswith('.TXT')]
+print(f'sd: {files}')
+if files:
+    files.sort(reverse=True)
+    file_name = files[0]
+    file_path = os.path.join(sd_dir, file_name)
+    print(f'converting: {file_name}')
+    if sessions is not None:
+        session = [session for session in sessions 
+                   if len(session) > 2 and session[1] == file_name]
+        settings = json.loads(session[0][2])
+        sf = settings['sf']
+        gain = settings['gain']
+        channels = settings['channels']
+        dts = datetime.datetime.strptime(session[0][0], '%Y-%m-%d %H:%M:%S')
+    else:
+        sf = 250
+        gain = 24
+        channels = {'F7-Fpz':0,'F8-Fpz':1}
+        dts = datetime.datetime.now()
+    
+    user = 'User'
+    gender = 'Male'; 
+    birthday = '1980_01_01-12_00_00'
+    brand = 'OpenBCI'
+    device = 'Cyton'
 
-header, signal_headers, signals, processed = obci_create_edf_adc(bci_signals, sf, channels, user, gender, dts, birthday)
-res = highlevel.write_edf(file_name + '.bdf', signals, signal_headers, header)
+    bci_signals, stops = process_file(file_path)
+    bci_signals = np.array(bci_signals)
+    header, signal_headers, signals, processed = obci_create_edf_adc(bci_signals, sf, channels, user, gender, dts, birthday)
+    file_bdf = os.path.join(working_dir, 'data', 
+       file_name + '_' + dts.strftime('%Y-%m-%d %H-%M-%S') + '.bdf')
+    res = highlevel.write_edf(file_bdf, signals, signal_headers, header)
+    if res:
+        print(f'BDF saved to {file_bdf}')
+    ADS1299_GAIN = gain
+    signals_V = np.vectorize(adc_v_bci)(signals)
+    
+    import csv
+    header = ['ts'] + [channel for channel in channels]
+    
+    import pandas as pd
+    ts = dts + pd.to_timedelta(list(np.arange(len(signals[0]))), unit='ms')*1000/sf
+    ts = ts.astype(np.int64)/1000000000
+    
+    signals_V = np.insert(signals_V, 0, ts, axis=0)
+    signals_V[1]
+    # Writing to a CSV file
+    file_csv = os.path.join(working_dir, 'data', file_name + '_' + str(sf) + 'Hz_' + dts.strftime('%Y-%m-%d %H-%M-%S') + '.csv')
+    with open(file_csv, 'w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(header)
+        for row in zip(*signals_V):
+            writer.writerow(row)
+        print(f'CSV saved to {file_csv}')
+

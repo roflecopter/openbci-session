@@ -1,0 +1,5 @@
+numpy
+pyedflib
+sqlite3
+pandas
+pyOpenBCI

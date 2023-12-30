@@ -3,6 +3,8 @@ import datetime
 import math
 import os
 import json
+import csv    
+import pandas as pd
 from pyedflib import highlevel
 import sqlite3
 from contextlib import closing
@@ -104,9 +106,10 @@ if files:
         channels = settings['channels']
         dts = datetime.datetime.strptime(session[0][0], '%Y-%m-%d %H:%M:%S')
     else:
+        # default settings
+        channels = {'F7-T3':0,'F8-T3':1,'O2-T3':2}
         sf = 250
         gain = 24
-        channels = {'F7-Fpz':0,'F8-Fpz':1}
         dts = datetime.datetime.now()
     
     user = 'User'
@@ -126,10 +129,7 @@ if files:
     ADS1299_GAIN = gain
     signals_V = np.vectorize(adc_v_bci)(signals)
     
-    import csv
     header = ['ts'] + [channel for channel in channels]
-    
-    import pandas as pd
     ts = dts + pd.to_timedelta(list(np.arange(len(signals[0]))), unit='ms')*1000/sf
     ts = ts.astype(np.int64)/1000000000
     

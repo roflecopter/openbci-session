@@ -12,6 +12,9 @@ gain = 24 # gain for all channels: 1 2 4 6 12 24
 sampling_rate = 500 # 250 500 1000 ...
 duration = '12H' # 5M 12H 24H ...
 
+# format sd card on mac with terminal command:
+# sudo diskutil eraseDisk FAT32 OBCI MBRFormat /dev/disk6
+
 t_sleep = 1
 dbg = False
 board = pyOpenBCI.OpenBCICyton(port='/dev/cu.usbserial-D200PMQM', daisy=False)
@@ -79,11 +82,11 @@ if dbg:
 # enable sdcard writing
 durations = {'5M':'A','12H':'K','24H':'L'}
 board.write_command(durations[duration])
-time.sleep(t_sleep * 5)
+time.sleep(t_sleep * 10)
 
 res = board.ser.read_all().decode()
 print(res)
-time.sleep(t_sleep * 10)
+time.sleep(t_sleep * 5)
 res2 = board.ser.read_all().decode()
 print(res2)
 res = res + res2

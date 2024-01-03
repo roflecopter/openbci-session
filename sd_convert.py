@@ -10,6 +10,7 @@ import sqlite3
 from contextlib import closing
 
 working_dir = '/path/to/openbci-psg'
+working_dir = '/Volumes/Data/Storage/Dev/openbci-psg'
 sd_dir = '/Volumes/BCI'
 
 ADS1299_BITS = (2**23-1)
@@ -108,7 +109,7 @@ if files:
     else:
         # default settings
         channels = {'F7-T3':0,'F8-T3':1,'O2-T3':2}
-        sf = 250
+        sf = 500
         gain = 24
         dts = datetime.datetime.now()
     
@@ -134,7 +135,7 @@ if files:
     ts = ts.astype(np.int64)/1000000000
     
     signals_V = np.insert(signals_V, 0, ts, axis=0)
-    signals_V[1]
+    
     # Writing to a CSV file
     file_csv = os.path.join(working_dir, 'data', file_name + '_' + str(sf) + 'Hz_' + dts.strftime('%Y-%m-%d %H-%M-%S') + '.csv')
     with open(file_csv, 'w', newline='') as file:

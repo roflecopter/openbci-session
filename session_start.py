@@ -5,18 +5,19 @@ import pyOpenBCI
 
 # config
 working_dir = '/path/to/openbci-psg' 
+working_dir = '/Volumes/Data/Storage/Dev/openbci-psg'
 ch_n = 8 # cyton without daisy have channels
-channels = {'F7-T3':0,'F8-T3':1,'O2-T3':2} # for sd processing at the session end, Label:%N [0-7] 
+channels = {'F7-T3':0,'F8-T3':1,'O2-T3':2, 'O1-T3':3, 'T4-T3':4} # for sd processing at the session end, Label:%N [0-7] 
 gain = 24 # gain for all channels: 1 2 4 6 12 24
-sampling_rate = 250 # 250 500 1000 ...
-duration = '24H' # 5M 12H 24H ...
+sampling_rate = 500 # 250 500 1000 ...
+duration = '12H' # 5M 12H 24H ...
 
 t_sleep = 1
 dbg = False
 board = pyOpenBCI.OpenBCICyton(port='/dev/cu.usbserial-D200PMQM', daisy=False)
 time.sleep(t_sleep)
 res = board.ser.read_all().decode()
-res
+
 if dbg:
     board.write_command('?')
     time.sleep(t_sleep * 3)
@@ -64,7 +65,7 @@ time.sleep(t_sleep*5)
 res = board.ser.read_all().decode()
 if dbg: print(res)
 if (len(re.findall('Success', res)) > 0):
-    print(f'channels set')
+    print(f'channels set: {channels}')
 else:
     sys.exit(f'channels not set')
 
@@ -81,12 +82,28 @@ board.write_command(durations[duration])
 time.sleep(t_sleep * 5)
 
 res = board.ser.read_all().decode()
+print(res)
+time.sleep(t_sleep * 10)
+res2 = board.ser.read_all().decode()
+print(res2)
+res = res + res2
+
+match = re.search(r' \d+ ', res)
+if match is not None:
+    matched = match.group(0)
+    if(len(matched) > 0):
+        blocks = int(re.sub(" ","", matched))
+        BLOCK_5MIN = 16890
+        sd_duration = (blocks * 250 / sampling_rate) / (BLOCK_5MIN * 12)
+        print(f'SD blocks: {blocks} and max duration: {round(sd_duration)}h', )
+
 if dbg: print(res)
 if len(re.findall('correct', res)) > 0:
-    re_file = re.findall(r'OBCI\_.*\.TXT', res)
+    re_file = re.findall(r'I\_.*\.T', res)
     if len(re_file) > 0:
+        re_file = 'OBC' + re_file[0] + 'XT'
         print(f'SD file init success {re_file}')
-        sd_file = re_file[0]
+        sd_file = re_file
         # board.start_stream(print_raw)
         board.write_command('~~')
         time.sleep(t_sleep)
@@ -109,8 +126,11 @@ if len(re.findall('correct', res)) > 0:
                     # sql = 'SELECT * FROM Sessions'
                     # cur.execute(sql)
                     # cur.fetchall()
-
+    else:
+        print(res)
+        sys.exit(f'SD file not found. Please restart board, dongle & check sd card')
 else:
-    sys.exit(f'SD init failed')
+    print(res)
+    sys.exit(f'SD init failed. Please restart board, dongle & check sd card')
     
 # dte = datetime.datetime.now(); print(dte)

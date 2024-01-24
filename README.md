@@ -8,7 +8,7 @@ Script to start OpenBCI session in a single click, usually for sleep EEG acquisi
 
 # sd_convert.py
 Script to convert OpenBCI SD card .TXT files to 
-* 24-bit BDF with raw ADC values. (I prefer to convert from ADC to mV after reading BDF)
+* 24-bit BDF with calibrated values. Accelerometer data is upsampled to match ADS sampling rate.
 * Recording timestamp and settings taken from sqlite db which automatically created and updated by session_start.py script
 
 # Quickstart
@@ -29,6 +29,6 @@ Script to convert OpenBCI SD card .TXT files to
 * to stop session just turn off board, pull out sd card and insert it into macbook
 * run sd_convert.py
 * script will list sd_dir files, and then tries to find session start information for that file from sqlite db. If nothing found default settings will be used.
-* as a result .BDF with raw ADC values and .CSV with uV values will be created inside 'data' directory (create it if is not exist before starting a session)
+* as a result .BDF and .CSV with uV for EEG and g for ACCEL values will be created inside 'data' directory (create it if is not exist before starting a session)
 * it is recommended to move .TXT file out of SD card to make it empty, and backup it somewhere else for possible re-processing in a future.
 * i didnt test scripts on windows / linux, but i assume that with no / little modifications they will work, because based on standard libraries.

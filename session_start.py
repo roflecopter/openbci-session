@@ -7,7 +7,12 @@ import pyOpenBCI
 working_dir = '/path/to/openbci-psg' 
 working_dir = '/Volumes/Data/Storage/Dev/openbci-psg'
 ch_n = 8 # cyton without daisy have channels
-channels = {'F7-T3':0,'F8-T3':1,'O2-T3':2, 'O1-T3':3, 'T4-T3':4} # for sd processing at the session end, Label:%N [0-7] 
+channels = {'F8-T3':0,'F7-T3':1,'O2-T3':2, 'O1-T3':3, 'T4-T3':4} # for sd processing at the session end, Label:%N [0-7] 
+# emg_channels = {'E2-Fpz':5, 'E1-Fpz':6}
+# emg_channels = {'EOG-RL':5, 'ECG-RA-V2':6}
+emg_channels = {'EOG-RL':5}
+# emg_channels = {}
+ground = {'Fpz':None}
 gain = 24 # gain for all channels: 1 2 4 6 12 24
 sampling_rate = 500 # 250 500 1000 ...
 duration = '12H' # 5M 12H 24H ...
@@ -57,7 +62,8 @@ else:
 # channel configuration
 gains = {1:0,2:1,4:2,6:3,8:4,12:5,24:6}
 on = '0' + str(gains[gain]) + '0110X'; off = '160000X'
-chs = [on] * len(channels) + [off] * (ch_n -len(channels))
+emg = '0' + str(gains[gain]) + '0000X'
+chs = [on] * len(channels) + [emg] * len(emg_channels) + [off] * (ch_n -len(channels)-len(emg_channels))
 ch_cmd = ('x1' + chs[0] + 'x2' + chs[1] + 
     'x3' + chs[2] + 'x4' + chs[3] + 
     'x5' + chs[4]+ 'x6' + chs[5] + 
@@ -68,6 +74,7 @@ time.sleep(t_sleep*5)
 res = board.ser.read_all().decode()
 if dbg: print(res)
 if (len(re.findall('Success', res)) > 0):
+    channels.update(emg_channels)
     print(f'channels set: {channels}')
 else:
     sys.exit(f'channels not set')
@@ -121,11 +128,10 @@ if len(re.findall('correct', res)) > 0:
                 with closing(con.cursor()) as cur:
                     sql = 'CREATE TABLE IF NOT EXISTS Sessions(dts datetime NOT NULL PRIMARY KEY, file VARCHAR(256), settings TEXT NOT NULL)'
                     cur.execute(sql)
-                    settings = {'gain':gain, 'channels':channels, 'sf': sampling_rate}
+                    settings = {'gain':gain, 'channels':channels, 'sf': sampling_rate, 'ground': ground}
                     json_settings = json.dumps(settings)
                     sql = 'REPLACE INTO Sessions (dts,file,settings) VALUES (\'' + dts.strftime('%Y-%m-%d %H:%M:%S') + '\', \'' + sd_file + '\', \'' + json_settings + '\')'
-                    cur.execute(sql)
-            
+                    cur.execute(sql)            
                     # sql = 'SELECT * FROM Sessions'
                     # cur.execute(sql)
                     # cur.fetchall()
@@ -135,5 +141,3 @@ if len(re.findall('correct', res)) > 0:
 else:
     print(res)
     sys.exit(f'SD init failed. Please restart board, dongle & check sd card')
-    
-# dte = datetime.datetime.now(); print(dte)

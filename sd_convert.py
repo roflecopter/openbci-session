@@ -14,10 +14,8 @@ from contextlib import closing
 from scipy.interpolate import interp1d, CubicSpline, PchipInterpolator, Akima1DInterpolator
 
 
-working_dir = '/path/to/openbci-psg'
-working_dir = '/Volumes/Data/Storage/Dev/openbci-psg'
+working_dir = '/path/to/openbci-session'
 sd_dir = '/Volumes/OBCI'
-sd_dir = '/Volumes/Data/Storage/Dev/openbci-psg/sample'
 
 def sc_interp1d_nan(y, m = 'pchip', extrapolate = False):
   y = np.array(y)
@@ -207,10 +205,12 @@ with closing(sqlite3.connect(os.path.join(working_dir, 'data','sessions.db'), ti
             sessions = cur.fetchall()
 
 files = [file for file in os.listdir(sd_dir) if file.endswith('.TXT')]
+files = ['OBCI_F1.TXT']
 print(f'sd: {files}')
 if files:
     files.sort(reverse=True)
     file_name = files[0]
+    file_path = os.path.join('/Volumes/Data/Storage/Self/!raw-1mOBCI/', file_name)
     file_path = os.path.join(sd_dir, file_name)
     print(f'converting: {file_name}')
 
@@ -218,6 +218,9 @@ if files:
     channels = {'F8-T3':0,'F7-T3':1,'O2-T3':2, 'O1-T3':3, 'T4-T3':4}
     sf = 500
     gain = 24
+    ch_n = 8
+    electrode = 'OpenBCI Gold Cup'
+    activity = 'sleep'
     dts = datetime.datetime.now()
     
     # look for previously saved session start and parameters
@@ -228,22 +231,28 @@ if files:
             settings = json.loads(session[0][2])
             sf = settings['sf']
             gain = settings['gain']
+            if 'electrode' in settings:
+                electrode = settings['electrode']
+            if 'activity' in settings:
+                activity = settings['activity']
+            if 'ch_n' in settings:
+                ch_n = settings['ch_n']
             channels = settings['channels']
             dts = datetime.datetime.strptime(session[0][0], '%Y-%m-%d %H:%M:%S')
     
-    n_ch = 8
-    channels['ACC_X'] = n_ch
-    channels['ACC_Y'] = n_ch + 1
-    channels['ACC_Z'] = n_ch + 2
+    channels['ACC_X'] = ch_n
+    channels['ACC_Y'] = ch_n + 1
+    channels['ACC_Z'] = ch_n + 2
     
     # BDF info
     user = 'User'
     gender = 'Male'
     birthday = '1980_01_01-12_00_00'
     brand = 'OpenBCI'
-    device = 'Cyton'
+    device = 'Cyton' if ch_n == 8 else 'CytonDaisy'
 
-    bci_signals, stops, stops_at = process_file(file_path)
+    bci_signals, stops, stops_at = process_file(file_path, n_ch=ch_n, 
+                                                n_acc=3, sf=sf)
     bci_signals = np.array(bci_signals)
 
     # set proper gain for correct ADC conversion
@@ -270,4 +279,3 @@ if files:
         for row in zip(*signals):
             writer.writerow(row)
         print(f'CSV saved to {file_csv}')
-

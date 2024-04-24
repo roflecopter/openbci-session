@@ -2,7 +2,7 @@ I run these scripts at my **macbook** as part of my home personal sleep research
 OpenBCI allows for gold-standard PSG (EEG, ECG etc) data collection and i use it every day. Read more [here](https://blog.kto.to/hypnodyne-zmax-vs-openbci-eeg-psg)
 
 # session_start.py
-Script to start OpenBCI session in a single click, usually for sleep EEG acquisiton purposes. 
+Script to start OpenBCI Cyton session in a single click, usually for sleep EEG acquisiton purposes. 
 * Used to start session with data saved on sd with desired sampling frequency (for greater than 250Hz modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) need to be flashed, otherwise it will always write with default 250Hz).
 * Saves session start timestamp and settings into sqlite file (data/sessions.db). Session info will be used in sd_convert.py script
 
@@ -10,6 +10,15 @@ Script to start OpenBCI session in a single click, usually for sleep EEG acquisi
 Script to convert OpenBCI SD card .TXT files to 
 * 24-bit BDF with calibrated values. Accelerometer data is upsampled to match ADS sampling rate.
 * Recording timestamp and settings taken from sqlite db which automatically created and updated by session_start.py script
+
+# session_analyse.py
+Script to analyses recorded sessions. Suited for short sessions (like meditations etc).
+Periods (and other settings) are defined for each session in sessions variable inside script.
+* Reads raw BDF file from sd_convert and filter it, split into epochs and rejects bad ones (autoreject)
+* Plot Multitaper Spectrogram for each channel, highlights bad epochs (autoreject) and periods
+* Plot Amplitude topomaps based on good epochs passed into yasa.bandpower for each period defined in sessions
+* Plot PSD / Frequency plot for each channel and period computed with mne.compute_psd(method='welch')
+* Plot Band Power (delta, theta, alpha, beta, gamma) vs time and highlings band epochs (autoreject) and periods
 
 # Quickstart
 * install / setup Python 3.11 environment or use global

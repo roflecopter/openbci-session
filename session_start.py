@@ -6,31 +6,46 @@ import pyOpenBCI
 # config
 working_dir = '/path/to/openbci-session' 
 
+# for simplicity channels should be attached from 
+# sequentially, starting from the first and without skipping
+# so for 3 channels setup always use channels 1, 2, 3 
+# otherwise you have to modify script, its not designed for free channels selection
+
 sleep_channels = {
     'F8-T5':0, 'F7-T5':1, 'O2-T5':2, 'O1-T5':3, 
-    'T8-T5':4, 'T7-T5':5, 'Fpz-T5':6, 'T6-T5':7}
+    'T8-T5':4, 'T7-T5':5, 'AFz-T5':6, 'T6-T5':7}
+sleep_ext_channels = {
+    'F8-T5':0, 'F7-T5':1, 'O2-T5':2, 'O1-T5':3, 
+    'T8-T5':4, 'T7-T5':5, 'AFz-T5':6, 'T6-T5':7,
+    'Cz': 8}
 cyton_cap_channels = {
     'F4-M1':0, 'F3-M1':1, 'O2-M1':2, 'O1-M1':3, 
     'T8-M1':4, 'T7-M1':5, 'Cz-M1':6, 'M2-M1':7}
 daisy_cap_channels = {
-    'F8-M1':0, 'F7-M1':1, 'F4-M1':2, 'F3-M1':3, 
-    'Fpz-M1':4, 'Fz-M1':5, 'T8-M1':6, 'T7-M1':7,
-    'C4-M1':8, 'C3-M1':9, 'Cz-M1':10, 'M2-M1':11,
-    'P4-M1':12, 'P3-M1':13, 'O2-M1':14, 'O1-M1':15}
+    'O2-M1':0, 'O1-M1':1, 'P4-M1':2, 'P3-M1':3, 
+    'C4-M1':4, 'C3-M1':5, 'Cz-M1':6, 'Pz-M1':7,
+    'F4-M1':8, 'F3-M1':9, 'F8-M1':10, 'F7-M1':11,
+    'T8-M1':12, 'T7-M1':13, 'Fz-M1':14, 'M2-M1':15}
+
 electrode_choice = {'1':'Gold Cup OpenBCI, Ten20', 
                     '2': 'Premium Ag/AgCl FRI, Sigma Gel',
                     '3':'Premium Ag/AgCl FRI', 
                     '4':'Ag/AgCl FRI disposable, Sigma Gel', 
-                    '5':'Gold Cup Grass, Ten20'}
+                    '5':'Gold Cup Grass, Ten20',
+                    '6':'Gold Cup OpenBCI, Sigma Gel',
+                    '7': 'Ambu Neuroline Cup, Sigma Gel'}
+
 activity_choice = {
+    '0': {'type': 'sleep', 'dur': '12H', 'sf': 500, 'g': 'Fp2', 'gain': 24,
+          'e': electrode_choice['1'], 'ch': sleep_ext_channels, 'dev': 'daisy'},
     '1': {'type': 'sleep', 'dur': '12H', 'sf': 500, 'g': 'Fp2', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': sleep_channels, 'dev': 'cyton'},
+          'e': electrode_choice['1'], 'ch': sleep_channels, 'dev': 'daisy'},
     '2': {'type': 'nsdr', 'dur': '1H', 'sf': 1000, 'g': 'AFz', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
+          'e': electrode_choice['4'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
     '3': {'type': 'swaroopa isha', 'dur': '1H', 'sf': 1000, 'g': 'AFz', 'gain': 24,
           'e': electrode_choice['1'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
     '4': {'type': 'meditation', 'dur': '1H', 'sf': 1000, 'g': 'AFz', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
+          'e': electrode_choice['6'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
     '5': {'type': 'rest', 'dur': '1H', 'sf': 1000, 'g': 'AFz', 'gain': 24,
           'e': electrode_choice['1'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
     '6': {'type': 'rest-eyeopen', 'dur': '1H', 'sf': 1000, 'g': 'AFz', 'gain': 24,
@@ -39,9 +54,15 @@ activity_choice = {
           'e': electrode_choice['1'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
     '8': {'type': 'meditation', 'dur': '1H', 'sf': 1000, 'g': 'Fp2', 'gain': 24,
           'e': electrode_choice['1'], 'ch': sleep_channels, 'dev': 'cyton'},
+    '9': {'type': 'unknown', 'dur': '1H', 'sf': 500, 'g': 'Fp2', 'gain': 24,
+          'e': electrode_choice['1'], 'ch': sleep_ext_channels, 'dev': 'daisy'},
+    '10': {'type': 'dantian breath', 'dur': '1H', 'sf': 1000, 'g': 'AFz', 'gain': 24,
+          'e': electrode_choice['1'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
     }
 
-activity_chosen = '8'; 
+note = '5m rest before and after, seated'
+note = ''
+activity_chosen = '1'; 
 activity = activity_choice[activity_chosen]['type'];
 device = activity_choice[activity_chosen]['dev']
 ch_n = 8 if device == 'cyton' else 16
@@ -58,7 +79,7 @@ gain = activity_choice[activity_chosen]['gain'];
 # emg_channels = {'ECG-AS':5}
 emg_channels = {}
 
-print(f'{activity}, {electrode_type}, g{gain}, {sampling_rate}Hz, {duration}')
+print(f'{device}: {activity}, {electrode_type}, g{gain}, {sampling_rate}Hz, {duration}')
 print(f'{channels}, ground: {ground}, emg: {emg_channels}')
 
 # format sd card on mac with terminal command:
@@ -66,7 +87,6 @@ print(f'{channels}, ground: {ground}, emg: {emg_channels}')
 
 t_sleep = 1
 dbg = False
-# board = pyOpenBCI.OpenBCICyton(port='/dev/cu.usbserial-D200PMQM', daisy=False)
 board = pyOpenBCI.OpenBCICyton(port='/dev/cu.usbserial-DP04WFVJ', daisy=False)
 time.sleep(t_sleep)
 res = board.ser.read_all().decode()
@@ -91,6 +111,20 @@ if res == 'Success: default$$$':
     print(f'mode is default')
 else:
     sys.exit(f'mode is not default')
+
+# remove daisy if it unused
+if (device == 'daisy') and (len(channels) < 9):
+    board.write_command('c')
+    time.sleep(t_sleep)
+    res = board.ser.read_all().decode()
+    if dbg: print(res)
+    if res == 'daisy removed$$$':
+        print(f'daisy is removed')
+        ch_n = 8
+        device = 'daisy-off'
+        print(f'Device changed to {device}: n_channels to {ch_n}')
+    else:
+        sys.exit(f'error, daisy should be removed, but it wasnt')
 
 # set sampling rate
 sampling_rates = {16000:0,8000:1,4000:2,2000:3,1000:4,500:5,250:6}
@@ -181,7 +215,7 @@ if len(re.findall('correct', res)) > 0:
                     settings = {
                         'gain':gain, 'channels':channels, 'sf': sampling_rate, 
                         'ground': ground, 'electrode': electrode_type, 'emg_ch': emg_channels,
-                        'ch_n': ch_n, 'activity': activity, 'device': device}
+                        'ch_n': ch_n, 'activity': activity, 'device': device, 'note': note}
                     json_settings = json.dumps(settings)
                     sql = 'REPLACE INTO Sessions (dts,file,settings) VALUES (\'' + dts.strftime('%Y-%m-%d %H:%M:%S') + '\', \'' + sd_file + '\', \'' + json_settings + '\')'
                     cur.execute(sql)            
@@ -194,13 +228,3 @@ if len(re.findall('correct', res)) > 0:
 else:
     print(res)
     sys.exit(f'SD init failed. Please restart board, dongle & check sd card')
-
-# old setups
-# channels = {'F8-T3':0} # for sd processing at the session end, Label:%N [0-7] 
-# channels = {'F8-T3':0,'F7-T3':1,'O2-T3':2, 'O1-T3':3, 'T4-T3':4} # for sd processing at the session end, Label:%N [0-7] 
-# channels = {'F8-Pz':0,'F7-Pz':1,'O2-Pz':2, 'O1-Pz':3, 'T8-Pz':4, 'T7-Pz':5, 'Fz-Pz':6, 'Cz-Pz':7} # for sd processing at the session end, Label:%N [0-7] 
-# channels = {'F8-Pz':0,'F7-Pz':1,'O2-Pz':2, 'O1-Pz':3, 'T8-Pz':4, 'T7-Pz':5, 'Fz-Pz':6} # for sd processing at the session end, Label:%N [0-7] 
-# channels = {'F8-Oz':0,'F7-Oz':1,'O2-Oz':2, 'O1-Oz':3, 'T8-Oz':4, 'T7-Oz':5, 'Fz-Oz':6, 'Cz-Oz': 7} # for sd processing at the session end, Label:%N [0-7] 
-# channels = {'F8-Oz':0, 'F7-Oz':1, 'O2-Oz':2, 'O1-Oz':3, 
-#             'T8-Oz':4, 'T7-Oz':5, 'Fz-Oz':6} # for sd processing at the session end, Label:%N [0-7] 
-# channels = {'F8-M1':0,'F7-M1':1,'O2-M1':2, 'O1-M1':3, 'T8-M1':4, 'T7-M1':5, 'Fz-M1':6, 'Cz-M1':7 } # for sd processing at the session end, Label:%N [0-7] 

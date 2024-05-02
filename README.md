@@ -20,6 +20,14 @@ Periods (and other settings) are defined for each session in sessions variable i
 * Plot PSD / Frequency plot for each channel and period computed with mne.compute_psd(method='welch')
 * Plot Band Power (delta, theta, alpha, beta, gamma) vs time and highlings band epochs (autoreject) and periods
 
+# sleep_analyse.py
+Script to analyses recored sleep session.
+* Reads raw BDF file from sd_convert and filter it
+* Builds hypnograms with YASA and make plots (for each channel, max probablity and adjusted consensus)
+* Plot Multitaper Spectrogram
+* PLto Amplitude topomaps grouped by sleep stage
+* Plot PSD / Frequency plot (easy to see bad channels)
+
 # Quickstart
 * install / setup Python 3.11 environment or use global
 * pull repo and cd into it
@@ -41,3 +49,5 @@ Periods (and other settings) are defined for each session in sessions variable i
 * as a result .BDF and .CSV with uV for EEG and g for ACCEL values will be created inside 'data' directory (create it if is not exist before starting a session)
 * it is recommended to move .TXT file out of SD card to make it empty, and backup it somewhere else for possible re-processing in a future.
 * i didnt test scripts on windows / linux, but i assume that with no / little modifications they will work, because based on standard libraries.
+* if something is not working and you want it to work / or want to add functionality - feel free to send pull request with fix / functionality. You can open issue and ask questions.
+* P.S. i'm not a python developer so my code might doesnt look well.

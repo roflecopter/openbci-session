@@ -5,6 +5,7 @@ import pyOpenBCI
 
 # config
 working_dir = '/path/to/openbci-session' 
+working_dir = '/Volumes/Data/Storage/Dev/openbci-psg'
 
 # for simplicity channels should be attached from 
 # sequentially, starting from the first and without skipping
@@ -113,18 +114,18 @@ else:
     sys.exit(f'mode is not default')
 
 # remove daisy if it unused
-if (device == 'daisy') and (len(channels) < 9):
-    board.write_command('c')
-    time.sleep(t_sleep)
-    res = board.ser.read_all().decode()
-    if dbg: print(res)
-    if res == 'daisy removed$$$':
-        print(f'daisy is removed')
-        ch_n = 8
-        device = 'daisy-off'
-        print(f'Device changed to {device}: n_channels to {ch_n}')
-    else:
-        sys.exit(f'error, daisy should be removed, but it wasnt')
+# if (device == 'daisy') and (len(channels) < 9):
+#     board.write_command('c')
+#     time.sleep(t_sleep)
+#     res = board.ser.read_all().decode()
+#     if dbg: print(res)
+#     if res == 'daisy removed$$$':
+#         print(f'daisy is removed')
+#         ch_n = 8
+#         device = 'daisy-off'
+#         print(f'Device changed to {device}: n_channels to {ch_n}')
+#     else:
+#         sys.exit(f'error, daisy should be removed, but it wasnt')
 
 # set sampling rate
 sampling_rates = {16000:0,8000:1,4000:2,2000:3,1000:4,500:5,250:6}
@@ -188,8 +189,13 @@ if match is not None:
     if(len(matched) > 0):
         blocks = int(re.sub(" ","", matched))
         BLOCK_5MIN = 16890
-        sd_duration = (blocks * 250 / sampling_rate) / (BLOCK_5MIN * 12)
-        print(f'SD blocks: {blocks} and max duration: {round(sd_duration,1)}h', )
+        sd_duration = (blocks * 250 / sampling_rate) / (BLOCK_5MIN / 5)
+        print(f'SD blocks: {blocks} and max duration: {round(sd_duration)} minutes', )
+        if duration in ['1H','2H','4H','12H','24H']:
+            if f'{round(sd_duration / 60)}H' != duration:
+                sys.exit(f'board init wrong duration for sd file: {duration} requested {round(sd_duration/60)}H returned')
+        elif f'{round(sd_duration)}M' != duration:
+            sys.exit(f'board init wrong duration for sd file: {duration} requested {round(sd_duration)}M returned')
 
 if dbg: print(res)
 if len(re.findall('correct', res)) > 0:

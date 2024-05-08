@@ -3,3 +3,13 @@ pyedflib
 sqlite3
 pandas
 pyOpenBCI
+contextlib
+json
+scipy
+seaborn
+importlib
+matplotlib
+mpl_toolkits
+autoreject
+yasa
+mne

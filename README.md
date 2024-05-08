@@ -1,4 +1,4 @@
-I run these scripts at my **macbook** as part of my home personal sleep research to start session and collect data from OpenBCI. 
+I run these scripts at my **macbook m3** as part of my home personal sleep research to start session and collect data from OpenBCI. 
 OpenBCI allows for gold-standard PSG (EEG, ECG etc) data collection. 
 Device is good enought for daily use, setting up montage (diy headband) with a session start takes 4-5 minutes. Read more [here](https://blog.kto.to/hypnodyne-zmax-vs-openbci-eeg-psg)
 

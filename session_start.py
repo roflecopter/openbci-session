@@ -149,9 +149,9 @@ ch_cmd = ('x1' + chs[0] + 'x2' + chs[1] +
     'x7' + chs[6] + 'x8' + chs[7])
 if len(chs) == 16:
     ch_cmd = ch_cmd  + ('xQ' + chs[8] + 'xW' + chs[9] + 
-        'xE' + chs[2] + 'xR' + chs[3] + 
-        'xT' + chs[4]+ 'xY' + chs[5] + 
-        'xU' + chs[6] + 'xI' + chs[7])
+        'xE' + chs[10] + 'xR' + chs[11] + 
+        'xT' + chs[12]+ 'xY' + chs[13] + 
+        'xU' + chs[14] + 'xI' + chs[15])
     
 print(ch_cmd)
 board.write_command(ch_cmd)

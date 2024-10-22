@@ -1,6 +1,6 @@
 I run these scripts at my **macbook m3** as part of my home personal sleep research to start session and collect data from OpenBCI. 
 OpenBCI allows for gold-standard PSG (EEG, ECG etc) data collection. 
-Device is good enought for daily use, setting up montage (diy headband) with a session start takes 4-5 minutes. Read more [here](https://blog.kto.to/hypnodyne-zmax-vs-openbci-eeg-psg)
+Device is good enough for daily use, setting up montage (DIY headband) and start a session usually takes 4-5 minutes. Read more [here](https://blog.kto.to/hypnodyne-zmax-vs-openbci-eeg-psg)
 
 # session_start.py
 Script to start OpenBCI Cyton session in a single click, usually for sleep EEG acquisiton purposes. 
@@ -22,11 +22,11 @@ Periods (and other settings) are defined for each session in sessions variable i
 * Plot Band Power (delta, theta, alpha, beta, gamma) vs time and highlings band epochs (autoreject) and periods
 
 # sleep_analyse.py
-Script to analyses recored sleep session.
-* Reads raw BDF file from sd_convert and filter it
+Script to analyse recored sleep session.
+* Reads raw BDF file from sd_convert.py and filter it
 * Builds hypnograms with YASA and make plots (for each channel, max probablity and adjusted consensus)
 * Plot Multitaper Spectrogram
-* PLto Amplitude topomaps grouped by sleep stage
+* Plot Amplitude topomaps grouped by sleep stage
 * Plot PSD / Frequency plot (easy to see bad channels)
 
 # Quickstart
@@ -51,4 +51,4 @@ Script to analyses recored sleep session.
 * it is recommended to move .TXT file out of SD card to make it empty, and backup it somewhere else for possible re-processing in a future.
 * i didnt test scripts on windows / linux, but i assume that with no / little modifications they will work, because based on standard libraries.
 * if something is not working and you want it to work / or want to add functionality - feel free to send pull request with fix / functionality. You can open issue and ask questions.
-* P.S. i'm not a python developer so my code might doesnt look well.
+* P.S. I'm not a python developer so my code might doesnt look well.

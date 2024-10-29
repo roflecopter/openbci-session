@@ -371,6 +371,13 @@ if load_data or not ('raws' in globals() or 'raws' in locals()):
                 raw_c, right,  [left_ref]  * len(right))             
             ch = [x.replace('-'+left_ref, '') for x in raw_c.ch_names]
             raw_c.rename_channels(dict(zip(raw_c.ch_names, ch)))
+        elif electrode_side(ref) == 'mid':
+            left_ref = ref
+            right_ref = ref
+            ch_eeg = [x.replace('-'+ref, '') for x in raw.ch_names if x not in non_eeg_ch]
+            ch_eeg_to_rename = [x for x in raw.ch_names if x not in non_eeg_ch]
+            raw.rename_channels(dict(zip(ch_eeg_to_rename, ch_eeg)))
+
         for l in left: ch_refs[l] =right_ref
         for r in right: ch_refs[r] =left_ref
         for m in mid: ch_refs[m] = ref

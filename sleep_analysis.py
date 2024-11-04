@@ -32,8 +32,7 @@ plt.rcParams.update({"font.size": 8})
 
 # enter dir and file for bdf file recorded with session_start.py
 data_dir = '/path/to/bdf_files_dir'
-data_dir = '/Volumes/Data/Storage/Self/!raw-1OBCI/archive'
-f_name = os.path.join(data_dir, '2024-05-01_22-47-27-max-OBCI_F9.TXT.bdf')
+f_name = os.path.join(data_dir, 'OBCI_28.TXT_2024-11-03 22-35-58.bdf')
 sleeps = {'1': {'file': f_name}}
 
 # signla filtering
@@ -45,7 +44,7 @@ sf_to = 256 # sampling rate to resample for fast processing
 freq_method = 'mne_psd_welch' # 'mne_psd_welch' / 'mne_trf_morlet' / 'mne_psd_multitaper' / 'mne_tfr_multitaper'
 topo_method = 'yasa_band_amp' # 'yasa_band_power' / 'mne_trf_morlet' / 'mne_fft_welch'
 w_fft = 4; m_bandwidth = 1; m_freq_bandwidth = 2; tfr_time_bandwidth = 4; 
-topo_ref = 'REST' # 'REST' / 'AR' rereference type
+topo_ref = 'AR' # 'REST' / 'AR' rereference type
 bp_relative = True # bandpass is relative or abs for topomap
 
 # multitaper spectrograms settings, can leave as is if not sure what is it
@@ -374,10 +373,8 @@ if load_data or not ('raws' in globals() or 'raws' in locals()):
         elif electrode_side(ref) == 'mid':
             left_ref = ref
             right_ref = ref
-            ch_eeg = [x.replace('-'+ref, '') for x in raw.ch_names if x not in non_eeg_ch]
-            ch_eeg_to_rename = [x for x in raw.ch_names if x not in non_eeg_ch]
-            raw.rename_channels(dict(zip(ch_eeg_to_rename, ch_eeg)))
-
+            ch = [x.replace('-'+ref, '') for x in raw_c.ch_names]
+            raw.rename_channels(dict(zip(raw_c.ch_names, ch)))
         for l in left: ch_refs[l] =right_ref
         for r in right: ch_refs[r] =left_ref
         for m in mid: ch_refs[m] = ref

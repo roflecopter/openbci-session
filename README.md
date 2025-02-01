@@ -3,7 +3,8 @@ OpenBCI allows for gold-standard PSG (EEG, ECG etc) data collection.
 Device is good enough for daily use, setting up montage (DIY headband) and start a session usually takes 4-5 minutes. Read more [here](https://blog.kto.to/hypnodyne-zmax-vs-openbci-eeg-psg)
 
 # sleep_analysis.py plots examples
-Here are example plots, for F7,F8,O1,O2 EEG channels referenced to AFz with ground at Fp2, ECG channel lead A-I
+Revealing the beauty of sleep :) 
+Here are example plots for F7,F8,O1,O2 EEG channels referenced to AFz with ground at Fp2, ECG channel lead A-I.
 
 Hypnogram: final consensus
 

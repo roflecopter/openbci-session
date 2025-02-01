@@ -3,33 +3,43 @@ OpenBCI allows for gold-standard PSG (EEG, ECG etc) data collection.
 Device is good enough for daily use, setting up montage (DIY headband) and start a session usually takes 4-5 minutes. Read more [here](https://blog.kto.to/hypnodyne-zmax-vs-openbci-eeg-psg)
 
 # sleep_analysis.py plots examples
+Here are example plots, for F7,F8,O1,O2 EEG channels referenced to AFz with ground at Fp2, ECG channel lead A-I
+
 Hypnogram: final consensus
 
 ![Final Hypnogram](sample/image/2025-02-01_00-12-06%20hypno%20user.png)
 
 Hypnogram: by channel
 
+Max probs - select most often stage for each channel
+
+Adj probs - sum stage probabilites from each channel and select stage with biggest probability. Only slightly differs from Max probs.
+
+Bottom 4 hypnos - prediction for each channel (channel name in header text)
+
 ![Channel Hypnograms](sample/image/2025-02-01_00-12-06%20hypno%20channels%20user.png)
 
-Topomap:
+Topomap (re-referenced to Average, so we can include AFz to look for SWS densite at Frontal during N3):
 
 ![Topomap](sample/image/2025-02-01_00-12-06%20topomap%20user.png)
 
-Merged Spectrum (all channels)
+Merged Spectrum (max from all channels)
 
 ![Spectrum](sample/image/2025-02-01_00-12-06%20merged%20spectrum%20user.png)
 
 Spectrum: by channel
+
 ![Spectrum by channel](sample/image/sample/image/2025-02-01_00-12-06%20spect%200%20user.png)
+
 ![Spectrum by channel](sample/image/sample/image/2025-02-01_00-12-06%20spect%201%20user.png)
 
 
-Slow Waves amplitude and count, Spindles, PSD
+Slow Waves Amplitude and count, Spindles, PSD
 
 ![PSD, SWS, Spindles](sample/image/2025-02-01_00-12-06%20PSD%20user.png)
 
 HR & HRV (ECG) by sleep stages, major movements, arrythmia/artifacts detection (all abbreviations explained below)
-
+Red - HR, Green - HRV, Blue - accelerometer
 ![HRV](sample/image/2025-02-01_00-12-06%20hrv%20user.png)
 
 

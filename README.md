@@ -23,6 +23,7 @@ Periods (and other settings) are defined for each session in sessions variable i
 
 # sleep_analyse.py
 Script to analyse recored sleep session. 
+Make sure to copy and rename sleep_analysis.yml.sample to sleep_analysis.yml and set 3 directories - bdf file location, cache dir location (csv will be stored here) and image dir location (plot pngs will be stored here)
 * Reads raw BDF file from sd_convert.py and filter it
 * Builds hypnograms with YASA and make plots (for each channel, max probablity and adjusted consensus)
 * Plot Multitaper Spectrogram

@@ -1,0 +1,7 @@
+default:
+    port: '/dev/cu.usbserial-DP04WFVJ'
+    session_dir: '/path/to/sesion_db'
+
+    session_file: 'sessions.db'
+    sql_dt_format: '%Y-%m-%d %H:%M:%S'
+

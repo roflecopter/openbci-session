@@ -1,21 +1,36 @@
-import numpy as np
-import scipy as sp
+import csv
 import datetime
-import math
-import os
 import json
-import csv    
+import math
+import numpy as np
+import os
 import pandas as pd
-import sqlite3
 import re
+import scipy as sp
+import sqlite3
+import yaml
 
-from pyedflib import highlevel
 from contextlib import closing
+from pyedflib import highlevel
 from scipy.interpolate import interp1d, CubicSpline, PchipInterpolator, Akima1DInterpolator
 
+# config, if relative path not working then use explicit path to working dir (repo dir with scripts and yml) or modify working directory in IDE/GUI settings
+# working_dir = '/path/to/openbci-session'
+working_dir = os.getcwd()
+cfg_file = os.path.join(working_dir, "sd_convert.yml")
 
-working_dir = '/path/to/openbci-session'
-sd_dir = '/Volumes/OBCI'
+# rename sleep_analysis.yml.sample to sleep_analysis.yml and set directories
+with open(cfg_file, "r") as yamlfile:
+    cfg_base = yaml.load(yamlfile, Loader=yaml.FullLoader)
+    cfg = cfg_base['default']
+
+# info will be embedded into output BDF
+user = 'User'
+gender = 'Male'
+birthday = '1980-01-01 12:00:00'
+brand = 'OpenBCI'
+
+save_csv = False # set to True to additionally export data to CSV (big size for long session / sleep)
 
 def sc_interp1d_nan(y, m = 'pchip', extrapolate = False):
   y = np.array(y)
@@ -43,6 +58,12 @@ def sc_interp1d_nan(y, m = 'pchip', extrapolate = False):
     y_interp = f(np.arange(y.shape[0]))
   return(y_interp)
 
+ADS1299_BITS = (2**23-1)
+ADS1299_GAIN = 24
+V_Factor = 1000000 # uV
+def adc_v_bci(signal, ADS1299_VREF = 4.5):
+    k = ADS1299_VREF / ADS1299_BITS / ADS1299_GAIN * V_Factor
+    return signal * k
 
 def interpret24bitAsInt32(hex_str):
     if len(hex_str) == 6:
@@ -89,24 +110,7 @@ def interpret16bitAsInt32(hex_str):
         return np.nan
 
 
-# # https://github.com/miladinovic/OpenBCI_SD_HEX2EEGLAB/tree/master
-def adc_test():
-    # https://docs.openbci.com/Cyton/CytonSDCard/#data-logging-format
-    
-    # https://openbci.com/forum/index.php?p=/discussion/3146/question-on-external-trigger-for-openbci-cyton-location-in-recording
-    # The normal data channels are 24 bits in size, and shown as 6 hex digits. 
-    # The three 'Aux' channels are only 16 bits, and shown as 4 hex digits. When you press and release the button, you should see a bit turn on and off in the Aux digits.
-    
-    # https://openbci.com/forum/index.php?p=/discussion/1653/script-to-convert-sd-card-file
-    # F260C9, this is converted as: -19954.006, HOW?
-    eeg_hex = 'F260C9'; eeg_adc_value = interpret24bitAsInt32(eeg_hex); eeg_uv = adc_v_bci(eeg_adc_value)
-    print(f'{eeg_hex} > {eeg_adc_value} > {eeg_uv}, {round(eeg_uv,3) == -19954.006}')
-    
-    accelScale = 0.002 / (pow (2, 4));
-    aux_hex = 'FAE0'; aux_adc_value = interpret16bitAsInt32(aux_hex); aux_g = aux_adc_value * accelScale 
-    print(f'{aux_hex} > {aux_adc_value} > {aux_g}')
-
-def processLine(split_line, n_ch, n_acc):    
+def process_line(split_line, n_ch, n_acc):    
     values_array = []
     for i in range(1, len(split_line)):
         value = split_line[i]
@@ -117,8 +121,9 @@ def processLine(split_line, n_ch, n_acc):
         values_array.append(value)
     return values_array
 
-def process_file(file_path, n_ch = 8, n_acc = 3, sf = 250):
+def process_file(file_path, n_ch = 8, n_acc = 3, sf = 250, verbose=False):
     with open(file_path, 'r') as file:
+        file = open(file_path, 'r')
         result = []
         i = 0
         stops_n = 0
@@ -126,6 +131,9 @@ def process_file(file_path, n_ch = 8, n_acc = 3, sf = 250):
         stops_at = []
         while True:
             line = file.readline()
+            if (i == 0) and (len(line) > 30):
+                print(f'File seems to be corrupted, line len {len(line)}')
+                break  # End of file
             if not line:
                 print(f'EOF, no line at {i}')
                 break  # End of file
@@ -141,7 +149,18 @@ def process_file(file_path, n_ch = 8, n_acc = 3, sf = 250):
                     print(f'stopped at {i} / {line}')
                     stops_at.append(interpret24bitAsInt32('00' + line))
             elif (len(split_line) > 3) and (len(split_line) <= n_ch + n_acc + 1):
-                values = processLine(split_line, n_ch, n_acc)
+                values = process_line(split_line, n_ch, n_acc)
+                if len(values) == (n_ch + n_acc):
+                    to_add = values
+                elif len(values) == (n_ch):
+                    to_add = values + [np.nan, np.nan, np.nan]
+                else:
+                    to_add = [0] * (n_ch + n_acc)
+                result.append(to_add)
+            elif (len(split_line) > 3) and (len(split_line) <= 16 + n_acc + 1):
+                # with 8 ch recorded with daisy on file contains 16ch + 3acc
+                values = process_line(split_line, 16, n_acc)
+                if len(values) >= 16: del values[8:16] # remove unused daisy channels 9-16
                 if len(values) == (n_ch + n_acc):
                     to_add = values
                 elif len(values) == (n_ch):
@@ -151,14 +170,15 @@ def process_file(file_path, n_ch = 8, n_acc = 3, sf = 250):
                 result.append(to_add)
             i += 1
             if i % (sf*60)== 0:
-                print(f"Processing... {i/(sf*60)}m")
+                if verbose:
+                    print(f"Processing... {i/(sf*60)}m, n_samples: {len(result)}, last:{result[-1]}")
             if i % (sf*600)== 0:
-                print(f'Processing... {round(i/(sf*60))}m')
+                print(f'Processing... {round(i/(sf*60))}m, n_samples: {len(result)}, last:{result[-1]}')
         return result, stops, stops_at
 
-def obci_bdf(bci_signals, sf, channels, user, gender, dts, birthday, gain):
-    header = highlevel.make_header(patientname=user, gender=gender, equipment=device, 
-      startdate = dts, birthdate = datetime.datetime.strptime(birthday, '%Y_%m_%d-%H_%M_%S'))
+def obci_bdf(bci_signals, sf, channels, user, gender, dts, birthday, gain, electrode, activity, device):
+    header = highlevel.make_header(patientname=user, gender=gender, equipment=device + ', ' + activity, 
+      startdate = dts, birthdate = datetime.datetime.strptime(birthday, cfg['sql_dt_format']))
     total_samples = math.floor(len(bci_signals) / sf)
     signals = []; signal_headers = []
     bci_signals = np.array(bci_signals)
@@ -183,99 +203,100 @@ def obci_bdf(bci_signals, sf, channels, user, gender, dts, birthday, gain):
             channel_data[channel_data > ch_ph_max] = ch_ph_max
             channel_data[channel_data < ch_ph_min] = ch_ph_min
             signals.append(channel_data)
-            signal_headers.append({"label": channel, "dimension": "uV", "sample_rate": sf, "sample_frequency": sf, 'physical_max': ch_ph_max, 'physical_min': ch_ph_min, 'digital_max': ch_dig_max, 'digital_min': ch_dig_min, 'transducer': 'Gold-Cup Electrode', 'prefilter': ''})
+            signal_headers.append({"label": channel, "dimension": "uV", "sample_rate": sf, "sample_frequency": sf, 'physical_max': ch_ph_max, 'physical_min': ch_ph_min, 'digital_max': ch_dig_max, 'digital_min': ch_dig_min, 'transducer': electrode, 'prefilter': ''})
         processed = len(channel_data)
     return([header, signal_headers, signals, processed])
 
-# ADC to uV conversion for ADS1299
-ADS1299_BITS = (2**23-1)
-ADS1299_GAIN = 24
-V_Factor = 1000000 # uV
-def adc_v_bci(signal, ADS1299_VREF = 4.5):
-    k = ADS1299_VREF / ADS1299_BITS / ADS1299_GAIN * V_Factor
-    return signal * k
+def session_lookup(file, sessions=None, defaults=None):
+    electrode_type = 'Gold Cup OpenBCI, Ten20'
+    activity = 'sleep'
+    ch_n = 8
+    dts = datetime.datetime.now()
+    if defaults is None:
+        channels = {
+            'F8-T5':0, 'F7-T5':1, 'O2-T5':2, 'O1-T5':3, 
+            'T8-T5':4, 'T7-T5':5, 'AFz-T5':6, 'T6-T5':7}
+        emg_channels = {}
+        sf = 500
+        gain = 24
+        device = 'cyton'
+        ground = 'Fpz'
+        settings = {
+            'gain':24, 'channels':channels, 'sf': sf, 
+            'ground': ground, 'electrode': electrode_type, 
+            'emg_ch': emg_channels,
+            'ch_n': ch_n, 'activity': activity, 'device': device
+            }
+    else: 
+        settings = defaults
+    
+    session_file = sessions.loc[sessions['file'] == file]
+    if len(session_file) > 0:
+        session = session_file.loc[session_file['dt'].idxmax()]
+        settings = json.loads(session['settings'])
+        if 'electrode' not in settings:
+            settings['electrode'] = electrode_type
+        if 'activity' not in settings:
+            settings['activity'] = activity
+        if 'ch_n' not in settings:
+            settings['ch_n'] = ch_n
+        dts = datetime.datetime.strptime(session['dts'], cfg['sql_dt_format'])
+    return dts, settings
+        
+def get_sessions(session_db):
+    sessions = None
+    with closing(sqlite3.connect(session_db, timeout=10)) as con:
+        with con:
+            with closing(con.cursor()) as cur:
+                sql = 'SELECT * FROM Sessions'
+                cur.execute(sql)
+                sessions = pd.DataFrame(cur.fetchall(), columns=['dts','file','settings'])
+                sessions['dt'] = pd.to_datetime(sessions['dts'])
+    return sessions
 
-sessions = None
-session = None
-with closing(sqlite3.connect(os.path.join(working_dir, 'data','sessions.db'), timeout=10)) as con:
-    with con:
-        with closing(con.cursor()) as cur:
-            sql = 'SELECT * FROM Sessions'
-            cur.execute(sql)
-            sessions = cur.fetchall()
+sessions = get_sessions(os.path.join(cfg['session_dir'],cfg['session_file']))
 
-files = [file for file in os.listdir(sd_dir) if file.endswith('.TXT')]
-files = ['OBCI_F1.TXT']
+files = [file for file in os.listdir(cfg['sd_dir']) if file.endswith('.TXT')]
 print(f'sd: {files}')
+
 if files:
     files.sort(reverse=True)
-    file_name = files[0]
-    file_path = os.path.join('/Volumes/Data/Storage/Self/!raw-1mOBCI/', file_name)
-    file_path = os.path.join(sd_dir, file_name)
+    file_name = files[0] # process only single last file
+    print(f'Process {file_name}')
+    file_path = os.path.join(cfg['sd_dir'], file_name)
     print(f'converting: {file_name}')
-
-    # default session settings
-    channels = {'F8-T3':0,'F7-T3':1,'O2-T3':2, 'O1-T3':3, 'T4-T3':4}
-    sf = 500
-    gain = 24
-    ch_n = 8
-    electrode = 'OpenBCI Gold Cup'
-    activity = 'sleep'
-    dts = datetime.datetime.now()
+    dts, settings = session_lookup(file_name, sessions)
+    print(f'dt: {dts}, settings: {settings}')
+    settings['channels']['ACC_X'] = settings['ch_n']
+    settings['channels']['ACC_Y'] = settings['ch_n'] + 1
+    settings['channels']['ACC_Z'] = settings['ch_n'] + 2
     
-    # look for previously saved session start and parameters
-    if sessions is not None:
-        session = [session for session in sessions 
-                   if len(session) > 2 and session[1] == file_name]
-        if len(session) > 0:
-            settings = json.loads(session[0][2])
-            sf = settings['sf']
-            gain = settings['gain']
-            if 'electrode' in settings:
-                electrode = settings['electrode']
-            if 'activity' in settings:
-                activity = settings['activity']
-            if 'ch_n' in settings:
-                ch_n = settings['ch_n']
-            channels = settings['channels']
-            dts = datetime.datetime.strptime(session[0][0], '%Y-%m-%d %H:%M:%S')
-    
-    channels['ACC_X'] = ch_n
-    channels['ACC_Y'] = ch_n + 1
-    channels['ACC_Z'] = ch_n + 2
-    
-    # BDF info
-    user = 'User'
-    gender = 'Male'
-    birthday = '1980_01_01-12_00_00'
-    brand = 'OpenBCI'
-    device = 'Cyton' if ch_n == 8 else 'CytonDaisy'
-
-    bci_signals, stops, stops_at = process_file(file_path, n_ch=ch_n, 
-                                                n_acc=3, sf=sf)
+    bci_signals, stops, stops_at = process_file(file_path, n_ch=settings['ch_n'], 
+                                                n_acc=3, sf=settings['sf'])
     bci_signals = np.array(bci_signals)
 
     # set proper gain for correct ADC conversion
-    ADS1299_GAIN = gain
-    header, signal_headers, signals, processed = obci_bdf(bci_signals, sf, channels, user, gender, dts, birthday, gain)
-    file_bdf = os.path.join(working_dir, 'data', 
-       file_name + '_' + dts.strftime('%Y-%m-%d %H-%M-%S') + '.bdf')
+    ADS1299_GAIN = settings['gain'] # might not work
+    header, signal_headers, signals, processed = obci_bdf(bci_signals, settings['sf'], settings['channels'], user, gender, dts, birthday, settings['gain'], settings['electrode'], settings['activity'], settings['device'])
+    file_bdf = os.path.join(cfg['data_dir'], 
+       file_name + '_' + dts.strftime(cfg['file_dt_format']) + '.bdf')
     res = highlevel.write_edf(file_bdf, signals, signal_headers, header)
     if res:
         print(f'BDF saved to {file_bdf}')
     
-    header = ['ts'] + [channel for channel in channels]
+    header = ['ts'] + [channel for channel in settings['channels']]
 
-    # create timestamps for csv and append to signals
-    ts = dts + pd.to_timedelta(list(np.arange(len(signals[0]))), unit='ms')*1000/sf
-    ts = ts.astype(np.int64)/1000000000
-    signals = np.insert(signals, 0, ts, axis=0)
-    
-    # Writing to a CSV file
-    file_csv = os.path.join(working_dir, 'data', file_name + '_' + str(sf) + 'Hz_' + dts.strftime('%Y-%m-%d %H-%M-%S') + '.csv')
-    with open(file_csv, 'w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(header)
-        for row in zip(*signals):
-            writer.writerow(row)
-        print(f'CSV saved to {file_csv}')
+    if save_csv:
+        # create timestamps for csv and append to signals
+        ts = dts + pd.to_timedelta(list(np.arange(len(signals[0]))), unit='ms')*1000/settings['sf']
+        ts = ts.astype(np.int64)/1000000000
+        signals = np.insert(signals, 0, ts, axis=0)
+        
+        # Writing to a CSV file
+        file_csv = os.path.join(cfg['data_dir'], file_name + '_' + str(settings['sf']) + 'Hz_' + dts.strftime(cfg['file_dt_format']) + '.csv')
+        with open(file_csv, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(header)
+            for row in zip(*signals):
+                writer.writerow(row)
+            print(f'CSV saved to {file_csv}')

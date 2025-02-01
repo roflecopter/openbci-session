@@ -1,0 +1,6 @@
+default:
+    multitaper_dir: '/path/to/multitaper_toolbox/python'
+    data_dir: '/path/to/bdf_dir'
+    
+    file_dt_format: '%Y-%m-%d_%H-%M-%S'
+    plot_dt_format: "%d %b'%y %H:%M"

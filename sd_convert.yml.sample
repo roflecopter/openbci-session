@@ -1,0 +1,9 @@
+default:
+    sd_dir: '/Volumes/OBCI'
+    data_dir: '/path/to/bdf_output_dir'
+    session_dir: '/path/to/sesion_db'
+
+    session_file: 'sessions.db' 
+    sql_dt_format: '%Y-%m-%d %H:%M:%S'
+    file_dt_format: '%Y-%m-%d %H-%M-%S'
+

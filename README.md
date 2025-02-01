@@ -15,9 +15,14 @@ Topomap:
 
 ![Topomap](sample/image/2025-02-01_00-12-06%20topomap%20user.png)
 
-Spectrum
+Merged Spectrum (all channels)
 
-![Spectrum](sample/image/2025-02-01_00-12-06%20spect%20user.png)
+![Spectrum](sample/image/2025-02-01_00-12-06%20merged%20spectrum%20user.png)
+
+Spectrum: by channel
+![Spectrum by channel](sample/image/sample/image/2025-02-01_00-12-06%20spect%200%20user.png)
+![Spectrum by channel](sample/image/sample/image/2025-02-01_00-12-06%20spect%201%20user.png)
+
 
 Slow Waves amplitude and count, Spindles, PSD
 

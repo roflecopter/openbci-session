@@ -1,63 +1,72 @@
-import mne
-import yasa
-import os
-import sys
-import seaborn as sns
-import importlib
-import numpy as np
-import pandas as pd
+#import importlib
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.dates as mdates
+import mne
+import numpy as np
+import os
+import pandas as pd
+import seaborn as sns
+import sys
+import yaml
+import yasa
+
 from datetime import datetime, timedelta
 from matplotlib import cm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+# comment qskit line if you dont process ECG
 from qskit import butter_lowpass_filter, hrv_process, hrv_quality, sc_interp # https://github.com/roflecopter/qskit
 from time import sleep
 
+# path to working dir (repo dir with scripts and yml)
+working_dir = '/path/to/openbci-session'
+working_dir = '/Volumes/Data/Storage/Dev/openbci-psg'
+
+# rename sleep_analysis.yml.sample to sleep_analysis.yml and set directories
+with open(os.path.join(working_dir, "sleep_analysis.yml"), "r") as yamlfile:
+    cfg_base = yaml.load(yamlfile, Loader=yaml.FullLoader)
+    cfg = cfg_base['default']
+
 # git pull https://github.com/preraulab/multitaper_toolbox/
-multitaper_dir = '/path/to/multitaper_toolbox' 
-os.chdir(multitaper_dir)
+os.chdir(cfg['multitaper_dir'])
 from multitaper_spectrogram_python import multitaper_spectrogram, nanpow2db
 
 np.set_printoptions(suppress=True, formatter={'float_kind':'{:f}'.format})
 pd.set_option('future.no_silent_downcasting', True)
 
-file_dt_format = '%Y-%m-%d %H_%M_%S'
-plot_dt_format = "%d %b'%y %H:%M"
 nj = 15 # n_jobs for multiprocessing, usually n_cpu - 1
 
 old_fontsize = plt.rcParams["font.size"]
 plt.rcParams.update({"font.size": 8})
 
+# used for cache/image file names
 device = 'openbci'
 user = 'user'
 
-# enter dir and file for bdf file recorded with session_start.py
-data_dir = '/path/to/bdf_files_dir'
-f_name = os.path.join(data_dir, '2025-02-01_00-12-06-max-OBCI_CC.TXT.bdf')
+# make array with bdf files recorded with session_start.py
+f_name = os.path.join(cfg['data_dir'], '2025-02-01_00-12-06-max-OBCI_CC.TXT.bdf')
 sleeps = {'1': {'file': f_name, 'ecg_invert': False}} # ecg_invert flips ecg signal, in case electrodes were placed inverse by mistake
 
-# dir for storing caches (HRV, Hypno in CSV)
-cache_dir = '/path/to/cache_dir'
-
-# dir for storing images (HRV, Hypno in PNG)
-image_dir = '/path/to/image_dir'
+# overwrite image files if exists (HRV, Hypno in PNG)
 image_overwrite = True
 
 # signal filtering
 bpf = [.35, 45] # band pass filter, [0.1, None] or [.35, 45]
 nf = [50,1] # notch filter, set to 50 or 60 Hz powerline noise freq depending on your country
+eog_bpf = [.5,8]; emg_bpf = [10,70] # filter for EOG data
+sf_to = 256 # sampling rate to resample for fast processing
+
 plots = ['Hypno', 'HRV', 'Features','Spectrum','Topomap'] # to plot all use: plots = ['Hypno', 'HRV', 'Features','Spectrum','Topomap']
 smooth_arousal = True # set True to smooth hypno by replace single awake epochs with previous epoch stage
 
-# more channel types
-eog_bpf = [.5,8]; emg_bpf = [10,70]
+# Channel types naming, everything not included threated as EEG. 
+# Put unused channels to misc_ch
+# Append ecg_ch if you have ECG channel with custom name
 misc_ch = ['E1-Fpz', 'E2-Fpz']; acc_ch = ['ACC_X', 'ACC_Y', 'ACC_Z']
 eog_ch = ['EOG-RL']; emg_ch = ['EMG-N']; ecg_ch = ['ECG', 'ECG-AS', 'ECG-AI', 'ECG-RA-V2']
-n_acc = 3 # 3 for OpenBCI
+n_acc = 3 # number accelerometer channels, 3 for OpenBCI
 
-sf_to = 256 # sampling rate to resample for fast processing
+# methods for calculating band power and topoplots
 freq_method = 'mne_psd_welch' # 'mne_psd_welch' / 'mne_trf_morlet' / 'mne_psd_multitaper' / 'mne_tfr_multitaper'
 topo_method = 'yasa_band_amp' # 'yasa_band_power' / 'mne_trf_morlet' / 'mne_fft_welch'
 w_fft = 4; m_bandwidth = 1; m_freq_bandwidth = 2; tfr_time_bandwidth = 4; 
@@ -77,6 +86,7 @@ units = {'psd_dB': 'dB(µV²/Hz)', 'amp': 'µV', 'p': 'µV²', 'p_dB': 'dB(µV²
 sig_specs = f'sf={sf_to}Hz, notch={nf}, bandpass={bpf}'
 spect_specs = f'num_tapers={num_tapers}, window={window_params}'
 
+# list of bands for band power
 bp_bands = [
     (1, 4, "Delta"),
     (4, 8, "Theta"),
@@ -89,7 +99,7 @@ bp_bands_dict = dict()
 for b in range(len(bp_bands)):
     bp_bands_dict[bp_bands[b][2]] = (bp_bands[b][0], bp_bands[b][1])
 
-units = {'psd_dB': 'dB(µV²/Hz)', 'amp': 'µV', 'p': 'µV²', 'p_dB': 'dB(µV²)', 'rel': '%'}
+# set everything to True for full pipeline execution
 load_spect = True
 load_data = True
 load_sp_sw = True
@@ -563,7 +573,7 @@ for index, raw in enumerate(raws):
         
         # Save CSV file for possible import into EDFBrowser
         # Sleep Staging > How do I edit the predicted hypnogram in https://raphaelvallat.com/yasa/faq.html#sleep-staging  for more details
-        hyp_file = f"{dts[index].strftime('%Y-%m-%d_%H-%M-%S')} {user} probs_adj_consensus.csv"; hyp_filename = os.path.join(cache_dir, hyp_file)
+        hyp_file = f"{dts[index].strftime(cfg['file_dt_format'])} {user} probs_adj_consensus.csv"; hyp_filename = os.path.join(cfg['cache_dir'], hyp_file)
         hypno_export = pd.DataFrame({"onset": np.arange(len(probs_adj_consensus)) * 30, "label": yasa.hypno_int_to_str(probs_adj_consensus), "duration": 30})
         hypno_export.to_csv(hyp_filename, index=False)
         
@@ -575,7 +585,6 @@ for index, raw in enumerate(raws):
         
         sleep_stats_info = sleep_stats(yasa.hypno_int_to_str(probs_adj_consensus))
         sleep_stats_infos.append(sleep_stats_info)
-
 
     if load_sp_sw or (len(sps) < 1):
         sp = yasa.spindles_detect(raw, include=(2), hypno=yasa.hypno_upsample_to_data(hypnos_adj[index], sf_hypno=1/30, data=raw_c))
@@ -594,24 +603,25 @@ if 'Hypno' in plots:
         fig.suptitle(f'#{raw.info["meas_date"]} Multitaper spectrogram, {spect_specs}')
         hyp = yasa.hypno_int_to_str(hypnos_max[index]); hyp_stats = sleep_stats(hyp)
         ax = plot_hypnogram(yasa.Hypnogram(hyp, start=pd.to_datetime(dts[index])), ax = axes[0])
-        ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / hyp_stats["TIB"]))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(plot_dt_format)} (Max Probs)')
+        ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / hyp_stats["TIB"]))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} (Max Probs)')
         hyp = yasa.hypno_int_to_str(hypnos_adj[index]); hyp_stats = sleep_stats(hyp)
         ax = plot_hypnogram(yasa.Hypnogram(hyp, start=pd.to_datetime(dts[index])), ax = axes[1])
-        ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / hyp_stats["TIB"]))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(plot_dt_format)} (Adj Probs)')
+        ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / hyp_stats["TIB"]))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} (Adj Probs)')
         for ch_index, ch in enumerate(eeg_ch_names):
             hyp = hypnos[index][ch_index]; hyp_stats = sleep_stats(hyp)
             ax = plot_hypnogram(yasa.Hypnogram(hyp, start=pd.to_datetime(dts[index])), ax = axes[ch_index+2])
-            ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / hyp_stats["TIB"]))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(plot_dt_format)} ({ch})')
+            ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / hyp_stats["TIB"]))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} ({ch})')
 
         plt.tight_layout(rect=[0, 0, 1, 0.99])
-        png_file = f"{dts[index].strftime('%Y-%m-%d_%H-%M-%S')} hypno channels {user}.png"; png_filename = os.path.join(image_dir, png_file)
+        png_file = f"{dts[index].strftime(cfg['file_dt_format'])} hypno channels {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)
         if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
             
         fig, ax = plt.subplots(figsize=(5, 2))
         hyp = yasa.hypno_int_to_str(hypnos_adj[index]); hyp_stats = sleep_stats(hyp)
         ax = plot_hypnogram(yasa.Hypnogram(hyp, start=pd.to_datetime(dts[index])), ax = ax, hl_lw=5)
-        ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / hyp_stats["TIB"]))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(plot_dt_format)} (Adj Probs)')
-        png_file = f"{dts[index].strftime('%Y-%m-%d_%H-%M-%S')} hypno {user}.png"; png_filename = os.path.join(image_dir, png_file)
+        ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / hyp_stats["TIB"]))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} (Adj Probs)')
+        plt.tight_layout(rect=[0, 0, 1, 0.99])
+        png_file = f"{dts[index].strftime(cfg['file_dt_format'])} hypno {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)
         if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 
 if 'HRV' in plots: # Process ECG
@@ -646,12 +656,12 @@ if 'HRV' in plots: # Process ECG
                 window = 15; slide = 5; metrics = None
                 hr_col = f'_{window}s'
                 hrv_cache_tag = f'hrv_p{window}_s{slide}'; 
-                hrv_file = f"{hrv_cache_tag}-{user}-{dts[index].strftime('%Y_%m_%d-%H_%M_%S')}.csv"
-                hrv_filepath = os.path.join(cache_dir, hrv_file)
+                hrv_file = f"{hrv_cache_tag}-{user}-{dts[index].strftime(cfg['file_dt_format'])}.csv"
+                hrv_filepath = os.path.join(cfg['cache_dir'], hrv_file)
                 if not os.path.isfile(hrv_filepath):
                     hr = hrv_process(raw.get_data(ecgs[index], units='uV')[0]*ecg_invert, sf = round(raw.info['sfreq']), 
                         window = window, slide = slide, user = user, device = device, 
-                        dts = dts[0], metrics = metrics, cache_dir = cache_dir)
+                        dts = dts[0], metrics = metrics, cache_dir = cfg['cache_dir'])
                 else:
                     hr = pd.read_csv(hrv_filepath)
     
@@ -662,12 +672,12 @@ if 'HRV' in plots: # Process ECG
                     window = windows[iw]; slide = slides[iw]
                     hrv_col = f'_{window}s'
                     hrv_cache_tag = f'hrv_p{window}_s{slide}'; 
-                    hrv_file = f"{hrv_cache_tag}-{user}-{dts[index].strftime('%Y_%m_%d-%H_%M_%S')}.csv"
-                    hrv_filepath = os.path.join(cache_dir, hrv_file)
+                    hrv_file = f"{hrv_cache_tag}-{user}-{dts[index].strftime(cfg['file_dt_format'])}.csv"
+                    hrv_filepath = os.path.join(cfg['cache_dir'], hrv_file)
                     if not os.path.isfile(hrv_filepath):
                         hrv = hrv_process(raw.get_data(ecgs[index], units='uV')[0]*ecg_invert, sf = round(raw.info['sfreq']), 
                             window = window, slide = slide, user = user, device = device, 
-                            dts = dts[index], metrics = metrics, cache_dir = cache_dir)
+                            dts = dts[index], metrics = metrics, cache_dir = cfg['cache_dir'])
                     else:
                         hrv = pd.read_csv(hrv_filepath)
                         
@@ -807,7 +817,7 @@ if 'HRV' in plots: # Process ECG
                             if hrv_exclude_acc or hrv_exclude_quality:
                                 art_title = f'({round(100*(hrv_acc_art + hrv_q_art) / hrv_len)}% / {round(100*(hr_acc_art + hr_q_art) / hr_len)}%)'
                             
-                            title = f"""{dts[0].strftime('%d %b %y %H:%M')} {acc_title} | OBCI {ecgs[index]} {art_title} p{hrv_col}
+                            title = f"""{dts[0].strftime(cfg['plot_dt_format'])} {acc_title} | OBCI {ecgs[index]} {art_title} p{hrv_col}
             HR {hr_t['tst']}±{hr_t['tst_sd']} N3 {hr_t['n3']}±{hr_t['n3_sd']} R {hr_t['r']}±{hr_t['r_sd']}
             RMSSD {rmssd_t['tst']}±{rmssd_t['tst_sd']} N3 {rmssd_t['n3']}±{rmssd_t['n3_sd']} R {rmssd_t['r']}±{rmssd_t['r_sd']}
             L/H {lfhf_t['tst']}±{lfhf_t['tst_sd']} N3 {lfhf_t['n3']}±{lfhf_t['n3_sd']} R {lfhf_t['r']}±{lfhf_t['r_sd']}
@@ -851,7 +861,7 @@ if 'HRV' in plots: # Process ECG
                             plt.subplots_adjust(left=0.01, right=0.99, top=0.9, bottom=0.01) 
                             plt.tight_layout()
                             plt.rcParams.update({"font.size": old_fontsize})
-                            png_file = f"{dts[index].strftime('%Y-%m-%d_%H-%M-%S')} hrv {user}.png"; png_filename = os.path.join(image_dir, png_file)    
+                            png_file = f"{dts[index].strftime(cfg['file_dt_format'])} hrv {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
                             if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 
 stages = ['W','N1','N2','N3','R']
@@ -938,7 +948,7 @@ if 'Topomap' in plots:
                     ax.set_title(f'{bl}')
     fig.suptitle(f'{plot_type} ({sig_specs}, {topo_method}=[{plot_params}]')
     plt.tight_layout()
-    png_file = f"{dts[index].strftime('%Y-%m-%d_%H-%M-%S')} topomap {user}.png"; png_filename = os.path.join(image_dir, png_file)    
+    png_file = f"{dts[index].strftime(cfg['file_dt_format'])} topomap {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
     if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 
 
@@ -1027,7 +1037,7 @@ if 'Spectrum' in plots:
                     clim = np.percentile(spect_data, [5, 98])  # from 5th percentile to 98th
                     im.set_clim(clim)  # actually change colorbar scale
             plt.tight_layout()
-            png_file = f"{dts[index].strftime('%Y-%m-%d_%H-%M-%S')} spect {user}.png"; png_filename = os.path.join(image_dir, png_file)    
+            png_file = f"{dts[index].strftime(cfg['file_dt_format'])} spect {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
             if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 
 # Power frequency plot with mne PSD computation
@@ -1071,6 +1081,6 @@ if 'Features' in plots:
         axe.set_title(f'SW Amp: {amps["Count"][max_amp]}*{round(amps["PTP"][max_amp])}{units["amp"]} for {amps["Channel"][max_amp]}-{refs_ch[index][amps["Channel"][max_amp]]} in N{amps["Stage"][max_amp]}')
 
     plt.tight_layout(rect=[0, 0, 1, 0.99])
-    png_file = f"{dts[index].strftime('%Y-%m-%d_%H-%M-%S')} PSD {user}.png"; png_filename = os.path.join(image_dir, png_file)    
+    png_file = f"{dts[index].strftime(cfg['file_dt_format'])} PSD {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
     if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
     plt.rcParams.update({"font.size": old_fontsize})

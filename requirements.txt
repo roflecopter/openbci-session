@@ -13,3 +13,4 @@ mpl_toolkits
 autoreject
 yasa
 mne
+yaml

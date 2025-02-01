@@ -34,6 +34,7 @@ with open(cfg_file, "r") as yamlfile:
 sleep_channels = {
     'F8-T5':0, 'F7-T5':1, 'O2-T5':2, 'O1-T5':3, 
     'T8-T5':4, 'T7-T5':5, 'AFz-T5':6, 'T6-T5':7}
+
 sleep_om_channels = {
     'F8-T5':0, 'F7-T5':1, 'O2-T5':2, 'O1-T5':3, 
     'T8-T5':4, 'T7-T5':5, 'AFz-T5':6, 'T6-T5':7}
@@ -145,15 +146,6 @@ note = ''
 
 
 # extract settings from chosen montage
-activity = activity_choice[activity_chosen]['type'];
-device = activity_choice[activity_chosen]['dev']
-ch_n = 8 if device == 'cyton' else 16
-channels = activity_choice[activity_chosen]['ch'];
-electrode_type = activity_choice[activity_chosen]['e'];
-duration = activity_choice[activity_chosen]['dur'];
-ground = activity_choice[activity_chosen]['g'];
-sampling_rate = activity_choice[activity_chosen]['sf'];
-gain = activity_choice[activity_chosen]['gain'];
 
 print(f'{device}: {activity}, {electrode_type}, g{gain}, {sampling_rate}Hz, {duration}')
 print(f'{channels}, ground: {ground}, emg: {emg_channels}')
@@ -187,6 +179,7 @@ if res == 'Success: default$$$':
     print(f'mode is default')
 else:
     sys.exit(f'mode is not default')
+
 
 # BLOCK_DIV in firmware code seems to reduce real size by 2 times due to wrong block size
 # this results in half session time, so do not detach daisy until it fixed in firmware

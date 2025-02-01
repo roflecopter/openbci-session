@@ -75,12 +75,10 @@ topo_ref = 'AR' # 'REST' / 'AR' rereference type
 bp_relative = True # bandpass is relative or abs for topomap
 
 # multitaper spectrograms settings, can leave as is if not sure what is it
-spect_vlim = [6,24]
-spect_lim = [1,16]
-freq_lim = [1,30]
-time_bandwidth = 5 # Set time-half bandwidth
+spect_vlim = [6,24]; spect_lim = [1,16]; freq_lim = [1,30]
+time_bandwidth = 24 # Set time-half bandwidth
 num_tapers = time_bandwidth*2 - 1  # Set number of tapers (optimal is time_bandwidth*2 - 1)
-window_params = [90, 45]  # Window size is Xs with step size of Ys
+window_params = [60, 30]  # Window size is Xs with step size of Ys
 
 # units for labels
 units = {'psd_dB': 'dB(µV²/Hz)', 'amp': 'µV', 'p': 'µV²', 'p_dB': 'dB(µV²)', 'rel': '%'}
@@ -882,7 +880,6 @@ if load_bp or not ('bps' in globals() or 'bps' in locals()):
     raws_bp = []
     for index, raw in enumerate(raws):
         eeg_ch_names = list(refs_ch[index].keys())
-        eeg_ch_names.remove(refs[index])
         raw_bp  = raws[index].copy().pick(eeg_ch_names)
         ten_twenty_montage = mne.channels.make_standard_montage('standard_1020')
         raw_bp.set_montage(ten_twenty_montage , match_case=False, on_missing="ignore")
@@ -910,7 +907,6 @@ if load_bp or not ('bps' in globals() or 'bps' in locals()):
 if 'Topomap' in plots:
     for index, raw in enumerate(raws):
         eeg_ch_names = list(refs_ch[index].keys())
-        eeg_ch_names.remove(refs[index])
         raw  = raws[index].copy().pick(eeg_ch_names)
         
         fig, axes = plt.subplots(len(stages_plot),len(bp_bands), 
@@ -952,7 +948,6 @@ if 'Topomap' in plots:
     png_file = f"{dts[index].strftime(cfg['file_dt_format'])} topomap {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
     if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 
-
 if 'Spectrum' in plots:
     # Multitaper spectrogram from Prerau Labs Multitaper Toolbox
     # https://github.com/preraulab/multitaper_toolbox/blob/master/python/multitaper_spectrogram_python.py
@@ -967,6 +962,12 @@ if 'Spectrum' in plots:
     clim_scale = False  # do not auto-scale colormap
     verbose = False  # print extra info
     xyflip = False  # do not transpose spect output matrix
+    
+    ch_order = ['F', 'C', 'O', 'T', 'A']
+    order_map = {letter: l_index for l_index, letter in enumerate(ch_order)}
+    def order_value(string):
+        first_letter = string[0]
+        return order_map.get(first_letter, float('inf'))  # Use inf for letters not in custom_order
 
     if load_spect or not ('spects_l' in globals() or 'spects_l' in locals()):
         spects_l = []; stimes_l = []; sfreqs_l = []
@@ -974,9 +975,11 @@ if 'Spectrum' in plots:
             spects_c = []; stimes_c = []; sfreqs_c = []
             eeg_ch_names = list(refs_ch[index].keys())
             eeg_ch_names.remove(refs[index])
-            raw  = raws[index].copy().pick(eeg_ch_names)
+            ch_eeg_sorted = sorted(eeg_ch_names, key=order_value)
 
-            for ch_index, ch in enumerate(eeg_ch_names):
+            raw  = raws[index].copy().pick(ch_eeg_sorted)
+
+            for ch_index, ch in enumerate(ch_eeg_sorted):
                 spect, stimes, sfreqs = multitaper_spectrogram(
                     raw.get_data(picks = [ch], units='uV'), raw.info['sfreq'], 
                     frequency_range, time_bandwidth, num_tapers, 
@@ -993,17 +996,82 @@ if 'Spectrum' in plots:
         eeg_ch_names = list(refs_ch[index].keys())
         eeg_ch_names.remove(refs[index])
         raw  = raws[index].copy().pick(eeg_ch_names)
-        n_ax = 4
-        n_cycles = 1 if len(eeg_ch_names) == 4 else round(len(eeg_ch_names)/n_ax + .5)
+        
+        # summary spectrum
+        fig, ax = plt.subplots(figsize=(14, 5))
+        old_fontsize = plt.rcParams["font.size"]
+        plt.rcParams.update({"font.size": 18})
+        fig.suptitle(f'#{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} Spectrogram, {spect_specs}')
+
+        spect, stimes, sfreqs = np.array(spects_c).max(axis=0), stimes_c[0], sfreqs_c[0]
+        spect_data = nanpow2db(spect)
+        
+        start_time = raw.info['meas_date']
+        times = [start_time + timedelta(seconds=int(s)) for s in stimes]
+        
+        dtx = times[1] - times[0]
+        dy = sfreqs[1] - sfreqs[0]
+        x_s = mdates.date2num(times[0]-dtx)
+        x_e = mdates.date2num(times[-1]+dtx)
+        extent = [x_s, x_e, sfreqs[-1]+dy, sfreqs[0]-dy]
+
+        im = ax.imshow(
+            spect_data, extent=extent, aspect='auto', 
+            cmap=plt.get_cmap('jet'), 
+            vmin = spect_vlim[0], vmax = spect_vlim[1],
+            )
+        ax.xaxis_date()  # Interpret x-axis values as dates
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))  # Format time as HH:MM:SS
+        ax.invert_yaxis()
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Frequency (Hz)")
+        ax.set_title(f'All Channels ({sig_specs})')
+        tick_intervals = np.linspace(x_s, x_e, 11)  # 11 points include 0% to 100%
+        ax.set_xticks(tick_intervals)
+        
+        h_min = 1.75; h_max = 13
+        p_size = 2
+        hypno_df = hypno_dfs[index]
+        hypno_stages = {}
+        # N3=3, N2=2, N1=1, R=4, W=0
+        hypno_stages['n3'] = hypno_df[(hypno_df['h'] == 3)]
+        hypno_stages['r'] = hypno_df[(hypno_df['h'] == 4)]
+        hypno_stages['n2'] = hypno_df[(hypno_df['h'] == 2)]
+        hypno_stages['w'] = hypno_df[(hypno_df['h'] == 0)]
+
+        if len(hypno_stages)> 0:
+            plt.scatter(hypno_stages['n3']['dt'], np.repeat(h_min, len(hypno_stages['n3'])), c='blueviolet', s=p_size, marker='s')
+            plt.scatter(hypno_stages['n2']['dt'], np.repeat(h_min + (h_max-h_min)/2, len(hypno_stages['n2'])), c='blue', s=p_size, marker='s')
+            plt.scatter(hypno_stages['r']['dt'], np.repeat(h_min + 2*(h_max-h_min)/3, len(hypno_stages['r'])), c='red', s=p_size, marker='s')
+            plt.scatter(hypno_stages['w']['dt'], np.repeat(h_max, len(hypno_stages['w'])), c='orange', s=p_size, marker='s')
+
+        # Scale colormap
+        if clim_scale:
+            clim = np.percentile(spect_data, [5, 98])  # from 5th percentile to 98th
+            im.set_clim(clim)  # actually change colorbar scale
+
+        plt.tight_layout()
+        plt.rcParams.update({"font.size": old_fontsize})
+        plt.subplots_adjust(left=0.05, right=0.95, top=0.85, bottom=0.05) 
+        
+        png_file = f"{dts[index].strftime(cfg['file_dt_format'])} merged spectrum {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
+        if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
+        
+        
+        n_ax = 2
+        n_up = 0 if (len(eeg_ch_names) % 2) == 0 else .5
+        n_cycles = round(len(eeg_ch_names)/n_ax + n_up)
 
         for cy in range(n_cycles):
             fig, axes = plt.subplots(n_ax, 
-                      figsize=(12, n_ax*6))
-            fig.suptitle(f'#{raw.info["meas_date"]} Multitaper spectrogram, {spect_specs}')
+                      figsize=(14, n_ax*5))
+            old_fontsize = plt.rcParams["font.size"]
+            plt.rcParams.update({"font.size": 18})
+            fig.suptitle(f'#{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} Spectrogram, {spect_specs}')
             axes = axes.flatten()
             idx_range = cy*n_ax + np.arange(0, n_ax, 1)
-            for ch_index, ch in enumerate(eeg_ch_names[min(idx_range):(max(idx_range)+1)]):
-                spect, stimes, sfreqs = spects_l[index][cy*n_ax + ch_index], stimes_l[index][ch_index], sfreqs_l[index][cy*n_ax + ch_index]
+            for cch_index, cch in enumerate(ch_eeg_sorted[min(idx_range):(max(idx_range)+1)]):
+                spect, stimes, sfreqs = spects_c[cy*n_ax + cch_index], stimes_c[cch_index], sfreqs_c[cy*n_ax + cch_index]
                 spect_data = nanpow2db(spect)
                 
                 start_time = raw.info['meas_date']
@@ -1015,7 +1083,7 @@ if 'Spectrum' in plots:
                 x_e = mdates.date2num(times[-1]+dtx)
                 extent = [x_s, x_e, sfreqs[-1]+dy, sfreqs[0]-dy]
         
-                ax = axes[ch_index]
+                ax = axes[cch_index]
                 im = ax.imshow(
                     spect_data, extent=extent, aspect='auto', 
                     cmap=plt.get_cmap('jet'), 
@@ -1023,13 +1091,10 @@ if 'Spectrum' in plots:
                     )
                 ax.xaxis_date()  # Interpret x-axis values as dates
                 ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))  # Format time as HH:MM:SS
-                fig.colorbar(im, ax=ax, label='PSD (dB)', shrink=0.8)
-                
                 ax.invert_yaxis()
-                
                 ax.set_xlabel("Time")
                 ax.set_ylabel("Frequency (Hz)")
-                ax.set_title(f'{raw.ch_names[cy*n_ax + ch_index]} - {refs_ch[index][eeg_ch_names[cy*n_ax + ch_index]]} ({sig_specs})')
+                ax.set_title(f'{ch_eeg_sorted[cy*n_ax + cch_index]} - {refs_ch[index][ch_eeg_sorted[cy*n_ax + cch_index]]} ({sig_specs})')
                 tick_intervals = np.linspace(x_s, x_e, 11)  # 11 points include 0% to 100%
                 ax.set_xticks(tick_intervals)
                 
@@ -1037,8 +1102,12 @@ if 'Spectrum' in plots:
                 if clim_scale:
                     clim = np.percentile(spect_data, [5, 98])  # from 5th percentile to 98th
                     im.set_clim(clim)  # actually change colorbar scale
+    
             plt.tight_layout()
-            png_file = f"{dts[index].strftime(cfg['file_dt_format'])} spect {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
+            plt.rcParams.update({"font.size": old_fontsize})
+            plt.subplots_adjust(left=0.01, right=0.99, top=0.9, bottom=0.01) 
+            
+            png_file = f"{dts[index].strftime(cfg['file_dt_format'])} spect {cy} {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
             if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 
 # Power frequency plot with mne PSD computation

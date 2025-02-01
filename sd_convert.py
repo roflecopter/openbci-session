@@ -6,7 +6,6 @@ import numpy as np
 import os
 import pandas as pd
 import re
-import scipy as sp
 import sqlite3
 import yaml
 
@@ -218,7 +217,6 @@ def session_lookup(file, sessions=None, defaults=None):
             'T8-T5':4, 'T7-T5':5, 'AFz-T5':6, 'T6-T5':7}
         emg_channels = {}
         sf = 500
-        gain = 24
         device = 'cyton'
         ground = 'Fpz'
         settings = {

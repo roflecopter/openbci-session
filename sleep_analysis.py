@@ -57,7 +57,7 @@ nf = [50,1] # notch filter, set to 50 or 60 Hz powerline noise freq depending on
 eog_bpf = [.5,8]; emg_bpf = [10,70] # filter for EOG data
 sf_to = 256 # sampling rate to resample for fast processing
 
-plots = ['Hypno', 'HRV', 'Features','Spectrum','Topomap'] # to plot all use: plots = ['Hypno', 'HRV', 'Features','Spectrum','Topomap']
+plots = ['Hypno', 'HRV', 'Features','Spectrum','Topomap', 'Radar'] # to plot all use: plots = ['Hypno', 'HRV', 'Features','Spectrum','Topomap']
 smooth_arousal = True # set True to smooth hypno by replace single awake epochs with previous epoch stage
 
 # Channel types naming, everything not included threated as EEG. 
@@ -623,6 +623,7 @@ if 'Hypno' in plots:
         png_file = f"{dts[index].strftime(cfg['file_dt_format'])} hypno {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)
         if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 
+ecg_stats = []
 if 'HRV' in plots: # Process ECG
     if load_ecg or not ('load_ecg' in globals() or 'load_ecg' in locals()):
         for index, raw in enumerate(raws):
@@ -660,7 +661,7 @@ if 'HRV' in plots: # Process ECG
                 if not os.path.isfile(hrv_filepath):
                     hr = hrv_process(raw.get_data(ecgs[index], units='uV')[0]*ecg_invert, sf = round(raw.info['sfreq']), 
                         window = window, slide = slide, user = user, device = device, 
-                        dts = dts[0], metrics = metrics, cache_dir = cfg['cache_dir'])
+                        dts = dts[index], metrics = metrics, cache_dir = cfg['cache_dir'])
                 else:
                     hr = pd.read_csv(hrv_filepath)
     
@@ -708,9 +709,10 @@ if 'HRV' in plots: # Process ECG
                     hypno_hrv = pd.merge(hrv,  hypno_df, on = "dtr", how = 'left')
                     hypno_hrv['dt'] = hypno_hrv['dt_x']
                     
-                    acc_title = ''
+                    acc_title = ''; movements_per_hour = 0
                     if major_acc_epoch is not None:
-                        acc_title = f"""M{len(major_acc_epoch)} / MH{round(len(major_acc_epoch)/((tst_adj + waso_adj)/60),2)}"""
+                        movements_per_hour = round(len(major_acc_epoch)/((tst_adj + waso_adj)/60),2)
+                        acc_title = f"""M{len(major_acc_epoch)} / MH{movements_per_hour}"""
                         if hrv_exclude_acc:
                             hr_acc_art = np.sum(hr['dtr'].isin(major_acc_epoch))
                             hrv_acc_art = np.sum(hrv['dtr'].isin(major_acc_epoch))
@@ -822,6 +824,12 @@ if 'HRV' in plots: # Process ECG
             L/H {lfhf_t['tst']}±{lfhf_t['tst_sd']} N3 {lfhf_t['n3']}±{lfhf_t['n3_sd']} R {lfhf_t['r']}±{lfhf_t['r_sd']}
             {abnormal_title}"""
             
+                            ecg_stats.append({
+                                'hr': hr_t['tst'],
+                                'rmssd': rmssd_t['tst'],
+                                'rmssd_n3': rmssd_t['n3'],
+                                'mh': movements_per_hour
+                                })
                             old_fontsize = plt.rcParams["font.size"]
                             plt.rcParams.update({"font.size": 15})
                             fig, ax = plt.subplots(1,1, figsize=(9,7))
@@ -1154,3 +1162,75 @@ if 'Features' in plots:
     png_file = f"{dts[index].strftime(cfg['file_dt_format'])} PSD {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
     if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
     plt.rcParams.update({"font.size": old_fontsize})
+
+if 'Radar' in plots:
+    for index, key in enumerate(raws_ori):
+        sleep_stats_info = sleep_stats_infos[index]
+        ecg_stats_info = ecg_stats[index]
+        n3 = sleep_stats_info['N3']; n3_goal = 90; n3_rng = 20
+        rem = sleep_stats_info['REM']; rem_goal = 105; rem_rng = 30
+        awk = sleep_stats_info['SOL_ADJ']+sleep_stats_info['WASO_ADJ']; awk_goal = 30; awk_rng = 20
+        hr = ecg_stats_info['hr']; hr_goal = 45; hr_rng = 10
+        hrv = ecg_stats_info['rmssd_n3']; hrv_goal = 35; hrv_rng = 25
+        mh = ecg_stats_info['mh']; mh_goal = 4.3; mh_rng = 2
+        
+        values = [
+            round(100*(n3/n3_goal)),
+            round(100*(rem/rem_goal)),
+            round(100*(awk_goal/awk)),
+            round(100*(hr_goal/hr)),
+            round(100*(hrv/hrv_goal)),
+            round(100*(mh_goal/mh)),
+        ]
+        
+        n3_d = round(100*(n3/n3_goal) - 100)
+        rem_d = round(100*(rem/rem_goal) - 100)
+        awk_d = round(100*(awk_goal/awk) - 100)
+        hr_d = round(100*(hr_goal/hr) - 100)
+        hrv_d = round(100*(hrv/hrv_goal) - 100)
+        mh_d = round(100*(mh_goal/mh) - 100)
+        
+        labels = [f'N3 {n3_d if n3_d < 0 else "+" + str(n3_d)}%', 
+                  f'REM {rem_d if rem_d < 0 else "+" + str(rem_d)}%',
+                  f'AWAKE {awk_d if awk_d < 0 else "+" + str(awk_d)}%',
+                  f'HR {hr_d if hr_d < 0 else "+" + str(hr_d)}%',
+                  f'HRV N3 {hrv_d if hrv_d < 0 else "+" + str(hrv_d)}%',
+                  f'Move/h {mh_d if mh_d < 0 else "+" + str(mh_d)}%',
+                  ]
+
+        
+        num_vars = len(labels)
+        angles_ul = np.linspace(0, 2 * np.pi, num_vars, endpoint=False)
+        angles = angles_ul.tolist()
+        values += values[:1]
+        angles += angles[:1]
+        
+        old_fontsize = plt.rcParams["font.size"]
+        plt.rcParams.update({"font.size": 14})
+        fig, ax = plt.subplots(figsize=(9, 8), subplot_kw={'projection': 'polar'})
+        ax.plot(np.linspace(0, 2 * np.pi, 100), [100] * 100, color='green', linewidth=2)
+        ax.plot(angles, values, color='#1aaf6c', linewidth=1)
+        ax.fill(angles, values, color='#1aaf6c', alpha=0.25)
+        ax.set_theta_offset(np.pi / 2)
+        ax.set_theta_direction(-1)
+        ax.set_thetagrids(np.degrees(angles_ul), labels)
+        for label, angle in zip(ax.get_xticklabels(), angles):
+          if angle in (0, np.pi):
+            label.set_horizontalalignment('center')
+          elif 0 < angle < np.pi:
+            label.set_horizontalalignment('left')
+          else:
+            label.set_horizontalalignment('right')
+        ax.set_ylim(0, 120)
+        ax.set_rlabel_position(180 / num_vars)
+        ax.tick_params(colors='#222222')
+        ax.tick_params(axis='y', labelsize=8)
+        ax.grid(color='#AAAAAA')
+        ax.spines['polar'].set_color('#222222')
+        ax.set_facecolor('#FAFAFA')
+        plt.tight_layout()
+        plt.rcParams.update({"font.size": old_fontsize})
+        
+        png_file = f"{dts[index].strftime(cfg['file_dt_format'])} Radar {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
+        if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
+        plt.rcParams.update({"font.size": old_fontsize})

@@ -22,12 +22,25 @@ Periods (and other settings) are defined for each session in sessions variable i
 * Plot Band Power (delta, theta, alpha, beta, gamma) vs time and highlings band epochs (autoreject) and periods
 
 # sleep_analyse.py
-Script to analyse recored sleep session.
+Script to analyse recored sleep session. 
 * Reads raw BDF file from sd_convert.py and filter it
 * Builds hypnograms with YASA and make plots (for each channel, max probablity and adjusted consensus)
 * Plot Multitaper Spectrogram
 * Plot Amplitude topomaps grouped by sleep stage
 * Plot PSD / Frequency plot (easy to see bad channels)
+* Plot HR, HRV for whole sleep period and for N3 / REM. HRV Plot includes major accelerometer movements.
+* Save hypnograms to csv in cache folder for easy import in EDFBrowser (Sleep Staging > How do I edit the predicted hypnogram in https://raphaelvallat.com/yasa/faq.html#sleep-staging  for more details)
+* Cache HRV data into CSV
+* Save plots into image folder in PNG format)
+
+# sleep_analyse.py ECG Processing
+For ECG/HRV processing [qskit](https://github.com/roflecopter/qskit) is required and ECG channel name in BDF must be set in ecg_ch variable. I usually use ECG-AI in session_start.py, set emg_channels = {'ECG-AI':4}. If you want to use another name - thats fine, but add it to sleep_analyse.py ecg_ch list to make sure it will be detected as ECG. Only first ECG channel will be processed (manually cycle hrv_process() if you need multiple)
+
+HRV plot have custom header:
+* M38 / MH4.3 means there were 38 major accelerometer movements or 4.3 per hour of sleep (TST)
+* HR & RMSSD lines contain Average±STD per whole period, then Average±STD during N3 (during 1st and 2nd sleep cycle), then Average±STD during REM
+* L/H = LF / HF
+* A113 M0.5 E0.8 Ec70 L42.7 - this is stats from ECG arrythmia analysis by qskit. Its experimental. M is missed beats per hour, E is extra beats per hour, Ec is ectopic beats per hour, L is longshort beats per hour and A (all) is summ of all per hour . M/E/Ec/L is detected by neurokit [signal_fixpeaks](https://neuropsychology.github.io/NeuroKit/functions/signal.html#signal-fixpeaks) method with detection method="Kubios" and is called in qskit [hrv_process.py](https://github.com/roflecopter/qskit/blob/main/qskit/hrv/hrv_process.py) during 1st round of R-peaks correction. I've developed this pipeline for Shimmer ECG and then adapted to OpenBCI ECG signal (Ten20 paste, bipolar gold-cup electrodes, [A-I position](https://blog.kto.to/bl-content/uploads/pages/autosave-ed05f773969d771675dafb13756d9194/leads.png)). Make sure ECG signal R-peaks are at the top in EDFBrowser, otherwise use ecg_invert=True in sleeps variable to flip ECG signal
 
 # Quickstart
 * install / setup Python 3.11 environment or use global

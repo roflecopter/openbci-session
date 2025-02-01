@@ -2,6 +2,32 @@ I run these scripts at my **macbook m3** as part of my home personal sleep resea
 OpenBCI allows for gold-standard PSG (EEG, ECG etc) data collection. 
 Device is good enough for daily use, setting up montage (DIY headband) and start a session usually takes 4-5 minutes. Read more [here](https://blog.kto.to/hypnodyne-zmax-vs-openbci-eeg-psg)
 
+# sleep_analysis.py plots examples
+Hypnogram: final consensus
+
+![Final Hypnogram](sample/image/2025-02-01_00-12-06%20hypno%20user.png)
+
+Hypnogram: by channel
+
+![Channel Hypnograms](sample/image/2025-02-01_00-12-06%20hypno%20channels%20user.png)
+
+Topomap:
+
+![Topomap](sample/image/2025-02-01_00-12-06%20topomap%20user.png)
+
+Spectrum
+
+![Spectrum](sample/image/2025-02-01_00-12-06%20spect%20user.png)
+
+Slow Waves amplitude and count, Spindles, PSD
+
+![PSD, SWS, Spindles](sample/image/2025-02-01_00-12-06%20PSD%20user.png)
+
+HR & HRV (ECG) by sleep stages, major movements, arrythmia/artifacts detection (all abbreviations explained below)
+
+![HRV](sample/image/2025-02-01_00-12-06%20hrv%20user.png)
+
+
 # script configs
 Each script comes with config file which is name as script but with yml extension. 
 * Simply rename session_start.yml.sample to session_start.yml, configure directroies
@@ -48,7 +74,8 @@ Make sure to copy and rename sleep_analysis.yml.sample to sleep_analysis.yml and
 For ECG/HRV processing [qskit](https://github.com/roflecopter/qskit) is required and ECG channel name in BDF must be set in ecg_ch variable. I usually use ECG-AI in session_start.py, set emg_channels = {'ECG-AI':4}. If you want to use another name - thats fine, but add it to sleep_analyse.py ecg_ch list to make sure it will be detected as ECG. Only first ECG channel will be processed (manually cycle hrv_process() if you need multiple)
 
 HRV plot have custom header:
-* M38 / MH4.3 means there were 38 major accelerometer movements or 4.3 per hour of sleep (TST)
+* M38 / MH4.83 means there were 38 major accelerometer movements or 4.83 per hour of sleep (TST).
+* (5% / 5%) means ~5% of HR and ~5% HRV epochs (HR and HRV processed separately) contained artifacts (which were discarded or autofixed). There always be artifacts due to movements / arrythmia / other muscle / noise. Less than 10% is good enough, if you have more than 10-15% - check your ECG signal for potential issues.
 * HR & RMSSD lines contain Average±STD per whole period, then Average±STD during N3 (during 1st and 2nd sleep cycle), then Average±STD during REM
 * L/H = LF / HF
 * A113 M0.5 E0.8 Ec70 L42.7 - this is stats from ECG arrythmia analysis by qskit. Its experimental. M is missed beats per hour, E is extra beats per hour, Ec is ectopic beats per hour, L is longshort beats per hour and A (all) is summ of all per hour . M/E/Ec/L is detected by neurokit [signal_fixpeaks](https://neuropsychology.github.io/NeuroKit/functions/signal.html#signal-fixpeaks) method with detection method="Kubios" and is called in qskit [hrv_process.py](https://github.com/roflecopter/qskit/blob/main/qskit/hrv/hrv_process.py) during 1st round of R-peaks correction. I've developed this pipeline for Shimmer ECG and then adapted to OpenBCI ECG signal (Ten20 paste, bipolar gold-cup electrodes, [A-I position](https://blog.kto.to/bl-content/uploads/pages/autosave-ed05f773969d771675dafb13756d9194/leads.png)). Make sure ECG signal R-peaks are at the top in EDFBrowser, otherwise use ecg_invert=True in sleeps variable to flip ECG signal

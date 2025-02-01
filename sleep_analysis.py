@@ -17,7 +17,6 @@ from time import sleep
 
 # git pull https://github.com/preraulab/multitaper_toolbox/
 multitaper_dir = '/path/to/multitaper_toolbox' 
-multitaper_dir = '/Volumes/Data/Storage/Dev/multitaper_toolbox/python'
 os.chdir(multitaper_dir)
 from multitaper_spectrogram_python import multitaper_spectrogram, nanpow2db
 
@@ -36,18 +35,14 @@ user = 'user'
 
 # enter dir and file for bdf file recorded with session_start.py
 data_dir = '/path/to/bdf_files_dir'
-data_dir = '/Volumes/Data/Storage/Self/!raw-1OBCI/archive'
-data_dir = '/Volumes/Data/Storage/Downloads'
 f_name = os.path.join(data_dir, '2025-02-01_00-12-06-max-OBCI_CC.TXT.bdf')
 sleeps = {'1': {'file': f_name, 'ecg_invert': False}} # ecg_invert flips ecg signal, in case electrodes were placed inverse by mistake
 
 # dir for storing caches (HRV, Hypno in CSV)
 cache_dir = '/path/to/cache_dir'
-cache_dir = '/Volumes/Data/Storage/Downloads/cache'
 
 # dir for storing images (HRV, Hypno in PNG)
 image_dir = '/path/to/image_dir'
-image_dir = '/Volumes/Data/Storage/Downloads/image'
 image_overwrite = True
 
 # signal filtering

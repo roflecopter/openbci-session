@@ -11,35 +11,36 @@ Hypnogram: final consensus
 
 Hypnogram: by channel
 
-Max probs - select most often stage for each channel
+Top one is Max probs - select most often stage across all channels
 
-Adj probs - sum stage probabilites from each channel and select stage with biggest probability. Only slightly differs from Max probs.
+Second one is Adj probs - for each stage sum probabilites by each channel and select stage with biggest probability sum. Only slightly differs from Max probs because takes into account predicted probabilities
 
 Bottom 4 hypnos - prediction for each channel (channel name in header text)
 
 ![Channel Hypnograms](sample/image/2025-02-01_00-12-06%20hypno%20channels%20user.png)
 
-Topomap (re-referenced to Average, so we can include AFz to look for SWS densite at Frontal during N3):
+Topomap (re-referenced to Average, so we can include AFz to look for most dense SWS point where deep sleep slow waves originate):
 
 ![Topomap](sample/image/2025-02-01_00-12-06%20topomap%20user.png)
 
-Merged Spectrum (max from all channels)
+Merged Spectrum (max across all channels)
 
 ![Spectrum](sample/image/2025-02-01_00-12-06%20merged%20spectrum%20user.png)
 
-Spectrum: by channel
+Spectrum: for each channel
 
 ![Spectrum by channel](sample/image/sample/image/2025-02-01_00-12-06%20spect%200%20user.png)
 
 ![Spectrum by channel](sample/image/sample/image/2025-02-01_00-12-06%20spect%201%20user.png)
 
 
-Slow Waves Amplitude and count, Spindles, PSD
+Slow Waves Amplitude and count (by channel, by stage), Spindles (by channel), PSD (by channel)
 
 ![PSD, SWS, Spindles](sample/image/2025-02-01_00-12-06%20PSD%20user.png)
 
 HR & HRV (ECG) by sleep stages, major movements, arrythmia/artifacts detection (all abbreviations explained below)
 Red - HR, Green - HRV, Blue - accelerometer
+Violet dots - HRV points inside major N3 segments during first two sleep cycles (first 180 minutes after SOL) which used for N3 RMSSD calculation.
 ![HRV](sample/image/2025-02-01_00-12-06%20hrv%20user.png)
 
 

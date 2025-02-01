@@ -29,9 +29,9 @@ Merged Spectrum (max across all channels)
 
 Spectrum: for each channel
 
-![Spectrum by channel](sample/image/sample/image/2025-02-01_00-12-06%20spect%200%20user.png)
+![Spectrum by channel](sample/image/2025-02-01_00-12-06%20spect%200%20user.png)
 
-![Spectrum by channel](sample/image/sample/image/2025-02-01_00-12-06%20spect%201%20user.png)
+![Spectrum by channel](sample/image/2025-02-01_00-12-06%20spect%201%20user.png)
 
 
 Slow Waves Amplitude and count (by channel, by stage), Spindles (by channel), PSD (by channel)

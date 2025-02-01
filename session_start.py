@@ -130,7 +130,7 @@ activity_choice = {
           'e': electrode_choice['1'], 'ch': sleep_af_channels, 'dev': 'cyton'},
     }
 
-activity_chosen = '9' # choose the montage you want to apply, add note if needed
+activity_chosen = '1' # choose the montage you want to apply, add note if needed
 # note = '2m rest before, seated'
 note = ''
 ### END MONTAGES

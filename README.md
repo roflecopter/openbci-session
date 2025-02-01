@@ -2,15 +2,22 @@ I run these scripts at my **macbook m3** as part of my home personal sleep resea
 OpenBCI allows for gold-standard PSG (EEG, ECG etc) data collection. 
 Device is good enough for daily use, setting up montage (DIY headband) and start a session usually takes 4-5 minutes. Read more [here](https://blog.kto.to/hypnodyne-zmax-vs-openbci-eeg-psg)
 
+# script configs
+Each script comes with config file which is name as script but with yml extension. 
+* Simply rename session_start.yml.sample to session_start.yml, configure directroies
+* Repeat for each script, but careful - session_dir and name should be same for sd_convert and session_start
+
 # session_start.py
 Script to start OpenBCI Cyton session in a single click, usually for sleep EEG acquisiton purposes. 
 * Used to start session with data saved on sd with desired sampling frequency (for greater than 250Hz modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) need to be flashed, otherwise it will always write with default 250Hz).
-* Saves session start timestamp and settings into sqlite file (data/sessions.db). Session info will be used in sd_convert.py script
+* Saves session start timestamp and settings into sqlite file (session_dir/sessions.db). Session info will be used in sd_convert.py script
+* Config: setup port and session_dir
 
 # sd_convert.py
 Script to convert OpenBCI SD card .TXT files to 
 * 24-bit BDF with calibrated values. Accelerometer data is upsampled to match ADS sampling rate.
 * Recording timestamp and settings taken from sqlite db which automatically created and updated by session_start.py script
+* Config: setup sd_dir (openbci sd card mountpoint, e.g. /Volumes/OBCI for mac), data_dir (for output files) and session_dir (must be equal to session_start.yml)
 
 # session_analyse.py
 Script to analyses recorded sessions. Suited for short sessions (like meditations etc).
@@ -20,11 +27,13 @@ Periods (and other settings) are defined for each session in sessions variable i
 * Plot Amplitude topomaps based on good epochs passed into yasa.bandpower for each period defined in sessions
 * Plot PSD / Frequency plot for each channel and period computed with mne.compute_psd(method='welch')
 * Plot Band Power (delta, theta, alpha, beta, gamma) vs time and highlings band epochs (autoreject) and periods
+* Config: setup multitaper_dir (multitaper toolbox repo) and data_dir (where bdf files for analysis are located)
 
 # sleep_analyse.py
 Script to analyse recored sleep session. 
-Make sure to copy and rename sleep_analysis.yml.sample to sleep_analysis.yml and set 3 directories - bdf file location, cache dir location (csv will be stored here) and image dir location (plot pngs will be stored here)
-* Reads raw BDF file from sd_convert.py and filter it
+Make sure to copy and rename sleep_analysis.yml.sample to sleep_analysis.yml and set 3 directories - bdf file directory location, cache dir location (csv will be stored here) and image dir location (plot pngs will be stored here)
+* You have to pass your BDF file created by sd_convert.py into sleeps array inside script (edit script to put filename manually)
+* Script then reads raw BDF file and filter it
 * Builds hypnograms with YASA and make plots (for each channel, max probablity and adjusted consensus)
 * Plot Multitaper Spectrogram
 * Plot Amplitude topomaps grouped by sleep stage
@@ -33,6 +42,7 @@ Make sure to copy and rename sleep_analysis.yml.sample to sleep_analysis.yml and
 * Save hypnograms to csv in cache folder for easy import in EDFBrowser (Sleep Staging > How do I edit the predicted hypnogram in https://raphaelvallat.com/yasa/faq.html#sleep-staging  for more details)
 * Cache HRV data into CSV
 * Save plots into image folder in PNG format)
+* Config: setup multitaper_dir and datadir similarly as for session_analyse.yml and cache_dir (save hrv/hypnogram csv files) and image_dir to have plots save to png.
 
 # sleep_analyse.py ECG Processing
 For ECG/HRV processing [qskit](https://github.com/roflecopter/qskit) is required and ECG channel name in BDF must be set in ecg_ch variable. I usually use ECG-AI in session_start.py, set emg_channels = {'ECG-AI':4}. If you want to use another name - thats fine, but add it to sleep_analyse.py ecg_ch list to make sure it will be detected as ECG. Only first ECG channel will be processed (manually cycle hrv_process() if you need multiple)
@@ -48,21 +58,21 @@ HRV plot have custom header:
 * pull repo and cd into it
 * run pip3 install -r requirements.txt
 * optional: flash modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) if you want 500Hz sampling rate and flashing LED during sd card write session
-* put sd card into macbook and set desired name, for example BCI. Full path should be /Volumes/BCI (default in script) and need to be set into sd_convert.py to sd_dir variable
-* inside board and insert Cyton USB dongle with switch at position GPIO6
-* run ls /dev and look for something like /dev/cu.usbserial-D200PMQM, exact name is required to start session
+* put sd card into macbook and set desired name, for example OBCI. For mac full path should be /Volumes/OBCI, copy go sd_convert.yml.sample and rename it to sd_convert.yml, open in notepad and set sd_dir value to '/Volumes/OBCI'
+* turn on board and insert Cyton USB dongle with switch at position GPIO6
+* run ls /dev and look for something like /dev/cu.usbserial-D200PMQM, exact name is required to start session. Put it into session_start.yml
 * turn on board into PC position
 * optional: run OpenBCI_GUI for visual inspection of signal / montage and for impendance check. Stop session before running session_start.py
-* it is recommended to verify/modify session_start.py and sd_convert default settings inside script, according to montage and repo location: working_dir (absolute repo path), duration, channels, gain, sampling rate, sd_dir. The default montage is {'F7-T3':0,'F8-T3':1,'O2-T3':2} with sf = 250Hz, gain = 24 and 24H duration, sd_dir is /Volumes/BCI (used only in sd_convert.py)
-* verify line for correct device port location: board = pyOpenBCI.OpenBCICyton(port='/dev/cu.usbserial-D200PMQM', daisy=False)
-* run python3 session_start.py
-* watch for any error messages to appear. Script will use serial interface to check board mode, will set sf, gain, setup channels and allocate space for recording on sd card, will save allocated file name, re-check sf and start session if everything is fine. Immediately after start it will save recording filename, current time and all settings into sqlite db
+* it is recommended to verify/modify session_start.py and sd_convert default settings, directories set in yml configs, other settings inside script, set them according to montage: duration, channels, gain, sampling rate. The default montage is something like {'F7-T3':0,'F8-T3':1,'O2-T3':2} with sf = 250Hz, gain = 24 and 24H duration. Make sure port, session_dir, session_file setup in session_start.ymld and sd_dir, session_dir, session_file setup in sd_convert.yml, these settings are mandatory. Session_dir, session_file should be same in both files.
+* device port from config will be passed to board with: board = pyOpenBCI.OpenBCICyton(port='/dev/cu.usbserial-D200PMQM', daisy=False)
+* run python3 session_start.py from terminal
+* watch for any error messages to appear. Script will use serial interface to check board mode, will set sf, gain, setup channels and allocate space for recording on sd card, will save allocated file name, re-check sf and start session if everything is fine. Immediately after start it will save recording filename, current time and all settings into sqlite db located in session_dir/session_file. If db isnt exists new will be created.
 * board with modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) will start turn on / off LED every 5s to confirm SD recording is started
 * to stop session just turn off board, pull out sd card and insert it into macbook
-* run sd_convert.py
-* script will list sd_dir files, and then tries to find session start information for that file from sqlite db. If nothing found default settings will be used.
-* as a result .BDF and .CSV with uV for EEG and g for ACCEL values will be created inside 'data' directory (create it if is not exist before starting a session)
-* it is recommended to move .TXT file out of SD card to make it empty, and backup it somewhere else for possible re-processing in a future.
-* i didnt test scripts on windows / linux, but i assume that with no / little modifications they will work, because based on standard libraries.
+* make sure config dirs correct and run python3 sd_convert.py
+* script will list sd_dir files, select last one and then tries to find session information for that file from sqlite db. If nothing found default settings will be used.
+* as a result .BDF and .CSV with uV for EEG and g for ACCEL values will be created inside data_dir directory (create all dirs in yml configs if they arent exist before starting a session)
+* it is recommended to copy .TXT file to backup it somewhere else for possible re-processing in a future.
+* i didnt test scripts on windows / linux, but i assume that with no or little modifications they should work.
 * if something is not working and you want it to work / or want to add functionality - feel free to send pull request with fix / functionality. You can open issue and ask questions.
 * P.S. I'm not a python developer so my code might doesnt look well.

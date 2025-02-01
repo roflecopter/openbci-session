@@ -27,10 +27,11 @@ with open(cfg_file, "r") as yamlfile:
 # so for 3 channels setup always use board channels 1, 2, 3
 # otherwise you have to modify script for you specific needs
 
-# here you can see different montages I've tried. You can reproduce and use one of these
-# or add your own; you can delete uneeded montages
+# here you can see different montages I've tried. You can reproduce and use one of these or add your own; 
+# you can delete unneeded montages between ### START MONTAGES and ### END MONTAGES
 # but make sure activity_choice contains at least single montage
 
+### START MONTAGES
 sleep_channels = {
     'F8-T5':0, 'F7-T5':1, 'O2-T5':2, 'O1-T5':3, 
     'T8-T5':4, 'T7-T5':5, 'AFz-T5':6, 'T6-T5':7}
@@ -134,6 +135,7 @@ activity_choice = {
 activity_chosen = '1' # choose the montage you want to apply, add note if needed
 # note = '2m rest before, seated'
 note = ''
+### END MONTAGES
 
 # full example of sleep EEG (F8, F7, O2, O1) with AFz as ref and FT7 as ground, with ECG (A-I lead) montage using daisy board, OpenBCI Gold cups with Ten-20 and 500Hz sampling frequency
 # activity_choice = {
@@ -144,8 +146,16 @@ note = ''
 # activity_chosen = '0'
 # here you have set montage, thats all, dont need to modify anything below
 
-
 # extract settings from chosen montage
+activity = activity_choice[activity_chosen]['type'];
+device = activity_choice[activity_chosen]['dev']
+ch_n = 8 if device == 'cyton' else 16
+channels = activity_choice[activity_chosen]['ch'];
+electrode_type = activity_choice[activity_chosen]['e'];
+duration = activity_choice[activity_chosen]['dur'];
+ground = activity_choice[activity_chosen]['g'];
+sampling_rate = activity_choice[activity_chosen]['sf'];
+gain = activity_choice[activity_chosen]['gain'];
 
 print(f'{device}: {activity}, {electrode_type}, g{gain}, {sampling_rate}Hz, {duration}')
 print(f'{channels}, ground: {ground}, emg: {emg_channels}')

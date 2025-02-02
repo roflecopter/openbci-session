@@ -44,6 +44,11 @@ Red - HR, Green - HRV, Blue - accelerometer
 Violet dots - HRV points inside major N3 segments during first two sleep cycles (first 180 minutes after SOL) which used for N3 RMSSD calculation.
 ![HRV](sample/image/2025-02-01_00-12-06%20hrv%20user.png)
 
+Radar plot with percentage deviations from goals, green circe is a perfect fit for goals set. 
+Goals can be changed manually in script.
+Positive values meaning desired direction (less movements results in increased percentage, more N3 also leads to increase), so just aiming all metrics to reach green circle
+
+![Radar](sample/image/2025-02-01_00-12-06%20Radar%20user.png)
 
 # script configs
 Each script comes with config file which is name as script but with yml extension. 
@@ -111,6 +116,25 @@ HRV plot have custom header:
 * device port from config will be passed to board with: board = pyOpenBCI.OpenBCICyton(port='/dev/cu.usbserial-D200PMQM', daisy=False)
 * run python3 session_start.py from terminal
 * watch for any error messages to appear. Script will use serial interface to check board mode, will set sf, gain, setup channels and allocate space for recording on sd card, will save allocated file name, re-check sf and start session if everything is fine. Immediately after start it will save recording filename, current time and all settings into sqlite db located in session_dir/session_file. If db isnt exists new will be created.
+Here is expected terminal output for python3 session_start.py:
+```
+cyton: sleep, Gold Cup OpenBCI, Ten20, g24, 500Hz, 12H
+{'F8-AFz': 0, 'F7-AFz': 1, 'O2-AFz': 2, 'O1-AFz': 3}, ground: Fp2, emg: {'ECG-AI': 4}
+Serial established
+mode is default
+sampling rate set to 500
+x1060110Xx2060110Xx3060110Xx4060110Xx5060000Xx6160000Xx7160000Xx8160000X
+channels set: {'F8-AFz': 0, 'F7-AFz': 1, 'O2-AFz': 2, 'O1-AFz': 3, 'ECG-AI': 4}
+Wiring and sdcard is correct.
+Size 4864000 SD file OBCI_CD.TXcce:T
+$$$
+
+SD blocks: 4864000 and max duration: 720 minutes
+SD file init success OBCI_CD.TXT
+Success: Sample rate is 500Hz$$$
+Session started at 2025-02-02 01:35:24.230442
+Closing Serial
+```
 * board with modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) will start turn on / off LED every 5s to confirm SD recording is started
 * to stop session just turn off board, pull out sd card and insert it into macbook
 * make sure config dirs correct and run python3 sd_convert.py

@@ -40,8 +40,13 @@ Slow Waves Amplitude and count (by channel, by stage), Spindles (by channel), PS
 ![PSD, SWS, Spindles](sample/image/2025-02-01_00-12-06%20PSD%20user.png)
 
 HR & HRV (ECG) by sleep stages, major movements, arrythmia/artifacts detection (all abbreviations explained below)
-Red - HR, Green - HRV, Blue - accelerometer
-Violet dots - HRV points inside major N3 segments during first two sleep cycles (first 180 minutes after SOL) which used for N3 RMSSD calculation.
+* Red line - HR
+* Green line & dots - HRV
+* Blue bars (at the bottom) - accelerometer, Blue squares (at the top) - major movements
+* Violet dots - HRV points inside major N3 segments during first two sleep cycles (first 180 minutes after SOL) which used for N3 RMSSD calculation
+* Red dots - HRV points during REM, do not confuse them with HR
+* Standard hypnogram stages colored (N3 violet, N2 blue, REM red, Awake yellow)
+  
 ![HRV](sample/image/2025-02-01_00-12-06%20hrv%20user.png)
 
 Radar plot with percentage deviations from goals, green circe is a perfect fit for goals set. 
@@ -50,13 +55,19 @@ Positive values meaning desired direction (less movements results in increased p
 
 ![Radar](sample/image/2025-02-01_00-12-06%20Radar%20user.png)
 
+After script is run you can import hypnogram located in cache_dir, named like datetime user probs_adj_consensus.csv file into [EDFBrowser](https://www.teuniz.net/edfbrowser/).
+
+![EDFBrowser + Hypno](sample/image/edfbrowser_signal_hypno.png)
+
+
+
 # script configs
 Each script comes with config file which is name as script but with yml extension. 
 * Simply rename session_start.yml.sample to session_start.yml, configure directroies
 * Repeat for each script, but careful - session_dir and name should be same for sd_convert and session_start
 
 # session_start.py
-Script to start OpenBCI Cyton session in a single click, usually for sleep EEG acquisiton purposes. 
+Script to start OpenBCI session in a single click, usually for sleep EEG acquisiton purposes. 
 * Used to start session with data saved on sd with desired sampling frequency (for greater than 250Hz modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) need to be flashed, otherwise it will always write with default 250Hz).
 * Saves session start timestamp and settings into sqlite file (session_dir/sessions.db). Session info will be used in sd_convert.py script
 * Config: setup port and session_dir

@@ -20,7 +20,9 @@ Bottom 4 hypnos - prediction for each channel (channel name in header text)
 
 ![Channel Hypnograms](sample/image/2025-02-01_00-12-06%20hypno%20channels%20user.png)
 
-Topomap (re-referenced to Average, so we can include AFz to look for most dense SWS point where deep sleep slow waves originate):
+Topomap, re-referenced to Average, so we can include AFz to look for most dense SWS point where N3 deep sleep slow waves originate.
+
+Y - sleep stages, X - different power bands.
 
 ![Topomap](sample/image/2025-02-01_00-12-06%20topomap%20user.png)
 

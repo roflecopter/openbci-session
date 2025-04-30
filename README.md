@@ -150,6 +150,29 @@ Closing Serial
 ```
 * board with modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) will start turn on / off LED every 5s to confirm SD recording is started
 * to stop session just turn off board, pull out sd card and insert it into macbook
+* in macos you can format sd card from terminal
+```
+# find disk number in dev with 'diskutil list', for example disk4
+# fill disk with zeros
+sudo diskutil zeroDisk /dev/disk4
+# format to FAT32
+sudo diskutil eraseDisk FAT32 OBCI MBRFormat /dev/disk4
+sudo diskutil mountDisk /dev/disk4
+# use 'diskutil list' to confirm disk4 has DOS_FAT_32 type
+diskutil list:
+    /dev/disk4 (internal, physical):
+       #:                       TYPE NAME                    SIZE       IDENTIFIER
+       0:     FDisk_partition_scheme                        *31.9 GB    disk4
+       1:                 DOS_FAT_32 OBCI                    31.9 GB    disk4s1
+# read 100mb of data after 50mb and confirm zeros (press q after command executed)
+sudo dd if=/dev/disk4 bs=1m skip=50 count=100 | hexdump -C | less
+    100+0 records in
+    100+0 records out
+    104857600 bytes transferred in 3.251993 secs (32244104 bytes/sec)
+    00000000  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+    *
+    06400000
+```
 * make sure config dirs correct and run python3 sd_convert.py
 * script will list sd_dir files, select last one and then tries to find session information for that file from sqlite db. If nothing found default settings will be used.
 * as a result .BDF and .CSV with uV for EEG and g for ACCEL values will be created inside data_dir directory (create all dirs in yml configs if they arent exist before starting a session)

@@ -45,8 +45,10 @@ device = 'openbci'
 user = 'user'
 
 # make array with bdf files recorded with session_start.py
-f_name = os.path.join(cfg['data_dir'], 'OBCI_CC.TXT_2025-02-01 00-12-06.bdf')
-sleeps = {'1': {'file': f_name, 'ecg_invert': False}} # ecg_invert flips ecg signal, in case electrodes were placed inverse by mistake
+#f_name = os.path.join(cfg['data_dir'], 'OBCI_CC.TXT_2025-02-01 00-12-06.bdf')
+#f_name = os.path.join(cfg['data_dir'], '2024-02-01_21-44-21-Alex-OBCI_F6.TXT.bdf')
+f_name = os.path.join(cfg['data_dir'], 'yasa_example_night_young.edf')
+sleeps = {'1': {'file': f_name, 'ecg_invert': True}} # ecg_invert flips ecg signal, in case electrodes were placed inverse by mistake
 
 # overwrite image files if exists (HRV, Hypno in PNG)
 image_overwrite = True
@@ -64,8 +66,9 @@ smooth_arousal = True # set True to smooth hypno by replace single awake epochs 
 # Put unused channels to misc_ch
 # Append ecg_ch if you have ECG channel with custom name
 misc_ch = ['E1-Fpz', 'E2-Fpz']; acc_ch = ['ACC_X', 'ACC_Y', 'ACC_Z']
-eog_ch = ['EOG-RL']; emg_ch = ['EMG-N']; ecg_ch = ['ECG', 'ECG-AS', 'ECG-AI', 'ECG-RA-V2']
+eog_ch = ['EOG-RL', 'ROC-A1','LOC-A2']; emg_ch = ['EMG-N','EMG1-EMG2']; ecg_ch = ['ECG', 'ECG-AS', 'ECG-AI', 'ECG-RA-V2','EKG-R-EKG-L']
 n_acc = 3 # number accelerometer channels, 3 for OpenBCI
+re_ref = False # set to True if you have recorded EEG with a single Ref channel and want to re-reference each channel to opposite hemisphere refs, e.g. F7-T3,F8-T3 will be changed to F7-T4,F8-T3. Always set to False if you have multiple refs
 
 # methods for calculating band power and topoplots
 freq_method = 'mne_psd_welch' # 'mne_psd_welch' / 'mne_trf_morlet' / 'mne_psd_multitaper' / 'mne_tfr_multitaper'
@@ -341,7 +344,10 @@ if load_data or not ('raws' in globals() or 'raws' in locals()):
     raws = []; refs = []; refs_ch = []; accs = []; ecgs = []; eogs = []; miscs = [];  
     raws_ori = []; dts = []
     for index, key in enumerate(sleeps):
-        raw = mne.io.read_raw_bdf(sleeps[key]['file'], preload=True, verbose=True)
+        if sleeps[key]['file'].endswith('edf') or sleeps[key]['file'].endswith('EDF'):
+            raw = mne.io.read_raw_edf(sleeps[key]['file'], preload=True, verbose=True)
+        else:
+            raw = mne.io.read_raw_bdf(sleeps[key]['file'], preload=True, verbose=True)
         dts.append(raw.info['meas_date'])
         ch = raw.ch_names.copy()
         
@@ -394,14 +400,15 @@ if load_data or not ('raws' in globals() or 'raws' in locals()):
             if len(ch_split) > 1:
                 electrodes.append(ch_split[0])
                 ch_refs.append(ch_split[1])
-        ref = ch_refs[0]
+        if re_ref:
+            ref = ch_refs[0]
         
-        # rename channels so the name is not include reference, only channel
-        ch = [x.replace('-'+ref, '') for x in ch]
-        raw.rename_channels(dict(zip(raw.ch_names, ch)))
-        raw.add_reference_channels(ref)
-        ch.append(ref)
-        
+            # rename channels so the name is not include reference, only channel
+            ch = [x.replace('-'+ref, '') for x in ch]
+            raw.rename_channels(dict(zip(raw.ch_names, ch)))
+            raw.add_reference_channels(ref)
+            ch.append(ref)
+
         # finally, build eeg channels list
         eeg_ch = [c for c in ch if c not in non_eeg_ch]
                 
@@ -427,53 +434,55 @@ if load_data or not ('raws' in globals() or 'raws' in locals()):
             raw.resample(sfreq=sf_to)
         
         raws_ori.append(raw.copy())
-        
-        # split channels each side into separate array
-        left = []; right = []; mid = []
-        for c in eeg_ch:
-            if electrode_side(c) == 'mid':
-                mid.append(c)
-            elif electrode_side(c) == 'left':
-                left.append(c)
-            elif electrode_side(c) == 'right':
-                right.append(c)
-    
         # copy raw and make final changes in a copy
         raw_c = raw.copy()
         
-        # if reference located at one of sides (e.g. T3 or T4), 
-        # we will re-refence channels to opposite reference (e.g. if ref is at T3, 
-        # then F3-T3 will be re-referenced to F3-T4)
-        # as result left hemisphere will be refenced to right, right hemisphere to left
-        # if reference is at center (e.g. Fz) then no re-reference will be done
-        ch_eeg_refs = {}
-        if electrode_side(ref) == 'left':
-            right_ref = ref[:-1] + str(int(ref[-1])+1)
-            left_ref = ref
-            raw_c = mne.set_bipolar_reference(
-                raw_c, left,  [right_ref] * len(left))
-            ch_eeg = [x.replace('-'+right_ref, '') for x in raw_c.ch_names if x not in non_eeg_ch]
-            ch_eeg_to_rename = [x for x in raw_c.ch_names if x not in non_eeg_ch]
-            raw_c.rename_channels(dict(zip(ch_eeg_to_rename, ch_eeg)))
-        elif electrode_side(ref) == 'right':
-            left_ref = ref[:-1] + str(int(ref[-1])-1)
-            right_ref = ref
-            raw_c = mne.set_bipolar_reference(
-                raw_c, right,  [left_ref]  * len(right))             
-            ch_eeg = [x.replace('-'+left_ref, '') for x in raw_c.ch_names if x not in non_eeg_ch]
-            ch_eeg_to_rename = [x for x in raw_c.ch_names if x not in non_eeg_ch]
-            raw_c.rename_channels(dict(zip(ch_eeg_to_rename, ch_eeg)))
-        elif electrode_side(ref) == 'mid':
-            left_ref = ref
-            right_ref = ref
-            ch_eeg = [x.replace('-'+ref, '') for x in raw_c.ch_names if x not in non_eeg_ch]
-            ch_eeg_to_rename = [x for x in raw_c.ch_names if x not in non_eeg_ch]
-            raw_c.rename_channels(dict(zip(ch_eeg_to_rename, ch_eeg)))
-        for l in left: ch_eeg_refs[l] = right_ref
-        for r in right: ch_eeg_refs[r] = left_ref
-        for m in mid: ch_eeg_refs[m] = ref
-        ch_eeg_with_ref = eeg_ch
-        del eeg_ch
+        if re_ref:
+            # split channels each side into separate array
+            left = []; right = []; mid = []
+            for c in eeg_ch:
+                print(c)
+                if electrode_side(c) == 'mid':
+                    mid.append(c)
+                elif electrode_side(c) == 'left':
+                    left.append(c)
+                elif electrode_side(c) == 'right':
+                    right.append(c)
+    
+            # if reference located at one of sides (e.g. T3 or T4), 
+            # we will re-refence channels to opposite reference (e.g. if ref is at T3, 
+            # then F3-T3 will be re-referenced to F3-T4)
+            # as result left hemisphere will be refenced to right, right hemisphere to left
+            # if reference is at center (e.g. Fz) then no re-reference will be done
+            ch_eeg_refs = {}
+            if electrode_side(ref) == 'left':
+                right_ref = ref[:-1] + str(int(ref[-1])+1)
+                left_ref = ref
+                raw_c = mne.set_bipolar_reference(
+                    raw_c, left,  [right_ref] * len(left))
+                ch_eeg = [x.replace('-'+right_ref, '') for x in raw_c.ch_names if x not in non_eeg_ch]
+                ch_eeg_to_rename = [x for x in raw_c.ch_names if x not in non_eeg_ch]
+                raw_c.rename_channels(dict(zip(ch_eeg_to_rename, ch_eeg)))
+    
+            elif electrode_side(ref) == 'right':
+                left_ref = ref[:-1] + str(int(ref[-1])-1)
+                right_ref = ref
+                raw_c = mne.set_bipolar_reference(
+                    raw_c, right,  [left_ref]  * len(right))             
+                ch_eeg = [x.replace('-'+left_ref, '') for x in raw_c.ch_names if x not in non_eeg_ch]
+                ch_eeg_to_rename = [x for x in raw_c.ch_names if x not in non_eeg_ch]
+                raw_c.rename_channels(dict(zip(ch_eeg_to_rename, ch_eeg)))
+            elif electrode_side(ref) == 'mid':
+                left_ref = ref
+                right_ref = ref
+                ch_eeg = [x.replace('-'+ref, '') for x in raw_c.ch_names if x not in non_eeg_ch]
+                ch_eeg_to_rename = [x for x in raw_c.ch_names if x not in non_eeg_ch]
+                raw_c.rename_channels(dict(zip(ch_eeg_to_rename, ch_eeg)))
+            for l in left: ch_eeg_refs[l] = right_ref
+            for r in right: ch_eeg_refs[r] = left_ref
+            for m in mid: ch_eeg_refs[m] = ref
+            ch_eeg_with_ref = eeg_ch
+            del eeg_ch
 
         # apply montage
         ten_twenty_montage = mne.channels.make_standard_montage('standard_1020')
@@ -481,12 +490,22 @@ if load_data or not ('raws' in globals() or 'raws' in locals()):
         
         # make arrays with raws and all channel types vocabulary arrays
         raws.append(raw_c)
-        refs.append(ref)
+        
         accs.append(acc)
         ecgs.append(ecg)
         eogs.append(eog)
-        miscs.append(misc)
-        refs_ch.append(ch_eeg_refs)
+        miscs.append(misc)        
+        if not re_ref:
+            ch_eeg_refs = {}
+            for e, ech in enumerate(eeg_ch):
+                ch_split = ech.split('-')
+                ch_eeg_refs[ech] =  ch_split[1]
+            refs.append(None)
+            ch_eeg_refs_exist = {k: v for k, v in ch_eeg_refs.items() if k in eeg_ch}
+        else:
+            refs.append(ref)
+            ch_eeg_refs_exist = {k: v for k, v in ch_eeg_refs.items() if k in ch_eeg}
+        refs_ch.append(ch_eeg_refs_exist)
 
 if load_hypno or not ('hypnos' in globals() or 'hypnos' in locals()):
     hypnos = []; probs = []; hypnos_max = []; hypnos_adj = []
@@ -497,7 +516,7 @@ if load_sp_sw or not ('sps' in globals() or 'sps' in locals()):
 for index, raw in enumerate(raws):
     # list of eeg channels names without ref
     eeg_ch_names = list(refs_ch[index].keys())
-    eeg_ch_names.remove(refs[index])
+    if re_ref: eeg_ch_names.remove(refs[index])
 
     # Process accelerometer
     acc_agg = None
@@ -594,7 +613,7 @@ for index, raw in enumerate(raws):
 if 'Hypno' in plots:
     for index, raw in enumerate(raws):
         eeg_ch_names = list(refs_ch[index].keys())
-        eeg_ch_names.remove(refs[index])
+        if re_ref: eeg_ch_names.remove(refs[index])
         raw  = raws[index].copy().pick(eeg_ch_names)
 
         fig, axes = plt.subplots(round(len(eeg_ch_names))+2, 
@@ -640,17 +659,18 @@ if 'HRV' in plots: # Process ECG
                 ecg_invert = -1 if sleeps[str(index+1)]['ecg_invert'] else 1
     
                 # get major movements from accelerometer data            
-                acc_agg = acc_aggs[index]
                 major_acc_epoch = None
-                if acc_agg is not None:
-                    acc_agg['dtr'] = acc_agg['dt'].dt.round('30s')
-                    hypno_acc = pd.merge(acc_agg,  hypno_df, on = "dtr", how = 'left')
-                    hypno_acc['dt'] = hypno_acc['dt_x']
-                    acc_th = 2 # in standard deviations
-                    # major_acc_nonwake_epoch = np.unique(hypno_acc[(hypno_acc['g_diff_norm_abs'] > acc_th) & (hypno_acc['h'] != 0)]['dtr'])
-                    major_acc_epoch = np.unique(hypno_acc[hypno_acc['g_diff_norm_abs'] > acc_th]['dtr'])
-                    major_acc_epoch = major_acc_epoch[major_acc_epoch > (dts[0] + timedelta(seconds=sol_adj*60))]
-                    len(major_acc_epoch)
+                if len(acc) > 0:
+                    acc_agg = acc_aggs[index]
+                    if acc_agg is not None:
+                        acc_agg['dtr'] = acc_agg['dt'].dt.round('30s')
+                        hypno_acc = pd.merge(acc_agg,  hypno_df, on = "dtr", how = 'left')
+                        hypno_acc['dt'] = hypno_acc['dt_x']
+                        acc_th = 2 # in standard deviations
+                        # major_acc_nonwake_epoch = np.unique(hypno_acc[(hypno_acc['g_diff_norm_abs'] > acc_th) & (hypno_acc['h'] != 0)]['dtr'])
+                        major_acc_epoch = np.unique(hypno_acc[hypno_acc['g_diff_norm_abs'] > acc_th]['dtr'])
+                        major_acc_epoch = major_acc_epoch[major_acc_epoch > (dts[0] + timedelta(seconds=sol_adj*60))]
+                        len(major_acc_epoch)
     
                 # process ECG to HR
                 window = 15; slide = 5; metrics = None
@@ -981,8 +1001,8 @@ if 'Spectrum' in plots:
         spects_l = []; stimes_l = []; sfreqs_l = []
         for index, raw in enumerate(raws):
             spects_c = []; stimes_c = []; sfreqs_c = []
+            if re_ref: eeg_ch_names.remove(refs[index])
             eeg_ch_names = list(refs_ch[index].keys())
-            eeg_ch_names.remove(refs[index])
             ch_eeg_sorted = sorted(eeg_ch_names, key=order_value)
 
             raw  = raws[index].copy().pick(ch_eeg_sorted)
@@ -1002,7 +1022,7 @@ if 'Spectrum' in plots:
 
     for index, raw in enumerate(raws):        
         eeg_ch_names = list(refs_ch[index].keys())
-        eeg_ch_names.remove(refs[index])
+        if re_ref: eeg_ch_names.remove(refs[index])
         raw  = raws[index].copy().pick(eeg_ch_names)
         
         # summary spectrum
@@ -1124,7 +1144,7 @@ if 'Features' in plots:
     ax = ax.flatten()
     for index, key in enumerate(raws_ori):
         eeg_ch_names = list(refs_ch[index].keys())
-        eeg_ch_names.remove(refs[index])
+        if re_ref: eeg_ch_names.remove(refs[index])
         raw  = raws[index].copy().pick(eeg_ch_names)
         if freq_method == 'mne_psd_welch':
             n_fft = int(w_fft * raw.info['sfreq'])
@@ -1172,7 +1192,11 @@ if 'Radar' in plots:
         awk = sleep_stats_info['SOL_ADJ']+sleep_stats_info['WASO_ADJ']; awk_goal = 30; awk_rng = 20
         hr = ecg_stats_info['hr']; hr_goal = 45; hr_rng = 10
         hrv = ecg_stats_info['rmssd_n3']; hrv_goal = 35; hrv_rng = 25
-        mh = ecg_stats_info['mh']; mh_goal = 4.3; mh_rng = 2
+        if len(acc) > 0: 
+            mh = ecg_stats_info['mh']
+        else:
+            mh = 4.3
+        mh_goal = 4.3; mh_rng = 2
         
         values = [
             round(100*(n3/n3_goal)),

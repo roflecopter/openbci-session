@@ -358,8 +358,10 @@ if load_data or not ('raws' in globals() or 'raws' in locals()):
         if 'Spectrum_YASA' in plots:
             for spect_ch in ch:
                 sig = raw.get_data(spect_ch, units='uV')
-                yasa.plot_spectrogram(sig[0], raw.info['sfreq'], None, trimperc=2.5)
+                png_file = f"{raw.info['meas_date'].strftime(cfg['file_dt_format'])} yasa spect {spect_ch}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)
+                fig = yasa.plot_spectrogram(sig[0], raw.info['sfreq'], None, trimperc=2.5)
                 plt.title(f'#{raw.info["meas_date"]} {spect_ch} YASA Spectrogram')
+                if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
         
         # classify channels by types: eog, emg, ecg, accelerometer
         eog = [elem for elem in ch if elem in eog_ch]

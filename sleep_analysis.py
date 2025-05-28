@@ -47,7 +47,7 @@ user = 'user'
 # make array with bdf files recorded with session_start.py
 #f_name = os.path.join(cfg['data_dir'], 'OBCI_CC.TXT_2025-02-01 00-12-06.bdf')
 #f_name = os.path.join(cfg['data_dir'], '2024-02-01_21-44-21-Alex-OBCI_F6.TXT.bdf')
-f_name = os.path.join(cfg['data_dir'], 'yasa_example_night_young.edf')
+f_name = os.path.join(cfg['data_dir'], '527_ref.edf')
 sleeps = {'1': {'file': f_name, 'ecg_invert': True}} # ecg_invert flips ecg signal, in case electrodes were placed inverse by mistake
 
 # overwrite image files if exists (HRV, Hypno in PNG)
@@ -59,7 +59,8 @@ nf = [50,1] # notch filter, set to 50 or 60 Hz powerline noise freq depending on
 eog_bpf = [.5,8]; emg_bpf = [10,70] # filter for EOG data
 sf_to = 256 # sampling rate to resample for fast processing
 
-plots = ['Hypno', 'HRV', 'Features','Spectrum','Topomap', 'Radar'] # to plot all use: plots = ['Hypno', 'HRV', 'Features','Spectrum','Topomap']
+#plots = ['Hypno', 'HRV', 'Features','Spectrum_YASA','Spectrum','Topomap', 'Radar'] # to plot all use: plots = ['Hypno', 'HRV', 'Features','Spectrum','Topomap']
+plots = ['Hypno', 'Spectrum_YASA']
 smooth_arousal = True # set True to smooth hypno by replace single awake epochs with previous epoch stage
 
 # Channel types naming, everything not included threated as EEG. 
@@ -349,7 +350,16 @@ if load_data or not ('raws' in globals() or 'raws' in locals()):
         else:
             raw = mne.io.read_raw_bdf(sleeps[key]['file'], preload=True, verbose=True)
         dts.append(raw.info['meas_date'])
+        mapping = {ch: ch.replace(' ', '') for ch in raw.ch_names}
+        raw.rename_channels(mapping)
+
         ch = raw.ch_names.copy()
+        
+        if 'Spectrum_YASA' in plots:
+            for spect_ch in ch:
+                sig = raw.get_data(spect_ch, units='uV')
+                yasa.plot_spectrogram(sig[0], raw.info['sfreq'], None, trimperc=2.5)
+                plt.title(f'#{raw.info["meas_date"]} {spect_ch} YASA Spectrogram')
         
         # classify channels by types: eog, emg, ecg, accelerometer
         eog = [elem for elem in ch if elem in eog_ch]
@@ -936,45 +946,54 @@ if 'Topomap' in plots:
     for index, raw in enumerate(raws):
         eeg_ch_names = list(refs_ch[index].keys())
         raw  = raws[index].copy().pick(eeg_ch_names)
-        
-        fig, axes = plt.subplots(len(stages_plot),len(bp_bands), 
-                 figsize=(len(bp_bands)*2, len(stages_plot)*2))
-        plot_type = f'{raws_bp[index].info["meas_date"]} Amplitude (ref={topo_ref})'; plot_params = ''
-        hypno_up = yasa.hypno_upsample_to_data(hypnos_adj[index], sf_hypno=1/30, data=raws[index])
-        for s_index, s in enumerate(stages_plot):
-            for b in range(len(bp_bands)):
-                bp = bps[index][s][b]
-                if not bp_relative:
-                    p_max = np.max(bp)
-                    p_min = np.min(bp)
-                else:
-                    p_max = max(np.array(bps[index]).max(axis=2)[...,b])
-                    p_min = min(np.array(bps[index]).min(axis=2)[...,b])*1.2
-                vlim = (p_min,p_max)
-                ax = axes[s_index,b]
-                im, _ = mne.viz.plot_topomap(
-                    bp, 
-                    raws_bp[index].info,
-                    cmap=cm.jet,
-                    axes=ax,
-                    vlim=vlim,
-                    show=False)
-                divider = make_axes_locatable(ax)
-                cax = divider.append_axes("right", size="5%", pad=0.05)
-                cbar = plt.colorbar(im, cax=cax, format='%0.1f', ticks = [vlim[0], vlim[1]], aspect=10)
-                cbar.ax.set_position([0.85, 0.1, 0.05, 0.8])
-                cbar.set_label(units['rel'])
-                bl = f'{bp_bands[b][2]} ({bp_bands[b][0]} - {bp_bands[b][1]} Hz)'
-                if b == 0:
-                    ax.set_title(f'{stages[s]} {bl}')
-                elif b == 1:
-                    ax.set_title(f'{bl}')
-                else:
-                    ax.set_title(f'{bl}')
-    fig.suptitle(f'{plot_type} ({sig_specs}, {topo_method}=[{plot_params}]')
-    plt.tight_layout()
-    png_file = f"{dts[index].strftime(cfg['file_dt_format'])} topomap {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
-    if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
+        if len(eeg_ch_names) > 2:
+            if not re_ref:
+                mapping = {ch: ch.split("-")[0] for ch in raw.ch_names if "-" in ch}
+                print(f'rename {mapping}')
+                raw.rename_channels(mapping)
+                ten_twenty_montage = mne.channels.make_standard_montage('standard_1020')
+                raw.set_montage(ten_twenty_montage , match_case=False)
+                raws_bp[index].rename_channels(mapping)
+                raws_bp[index].set_montage(ten_twenty_montage , match_case=False)
+    
+            fig, axes = plt.subplots(len(stages_plot),len(bp_bands), 
+                     figsize=(len(bp_bands)*2, len(stages_plot)*2))
+            plot_type = f'{raws_bp[index].info["meas_date"]} Amplitude (ref={topo_ref})'; plot_params = ''
+            hypno_up = yasa.hypno_upsample_to_data(hypnos_adj[index], sf_hypno=1/30, data=raws[index])
+            for s_index, s in enumerate(stages_plot):
+                for b in range(len(bp_bands)):
+                    bp = bps[index][s][b]
+                    if not bp_relative:
+                        p_max = np.max(bp)
+                        p_min = np.min(bp)
+                    else:
+                        p_max = max(np.array(bps[index]).max(axis=2)[...,b])
+                        p_min = min(np.array(bps[index]).min(axis=2)[...,b])*1.2
+                    vlim = (p_min,p_max)
+                    ax = axes[s_index,b]
+                    im, _ = mne.viz.plot_topomap(
+                        bp, 
+                        raws_bp[index].info,
+                        cmap=cm.jet,
+                        axes=ax,
+                        vlim=vlim,
+                        show=False)
+                    divider = make_axes_locatable(ax)
+                    cax = divider.append_axes("right", size="5%", pad=0.05)
+                    cbar = plt.colorbar(im, cax=cax, format='%0.1f', ticks = [vlim[0], vlim[1]], aspect=10)
+                    cbar.ax.set_position([0.85, 0.1, 0.05, 0.8])
+                    cbar.set_label(units['rel'])
+                    bl = f'{bp_bands[b][2]} ({bp_bands[b][0]} - {bp_bands[b][1]} Hz)'
+                    if b == 0:
+                        ax.set_title(f'{stages[s]} {bl}')
+                    elif b == 1:
+                        ax.set_title(f'{bl}')
+                    else:
+                        ax.set_title(f'{bl}')
+            fig.suptitle(f'{plot_type} ({sig_specs}, {topo_method}=[{plot_params}]')
+            plt.tight_layout()
+            png_file = f"{dts[index].strftime(cfg['file_dt_format'])} topomap {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
+            if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 
 if 'Spectrum' in plots:
     # Multitaper spectrogram from Prerau Labs Multitaper Toolbox

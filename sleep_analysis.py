@@ -45,10 +45,8 @@ device = 'openbci'
 user = 'user'
 
 # make array with bdf files recorded with session_start.py
-#f_name = os.path.join(cfg['data_dir'], 'OBCI_CC.TXT_2025-02-01 00-12-06.bdf')
-#f_name = os.path.join(cfg['data_dir'], '2024-02-01_21-44-21-Alex-OBCI_F6.TXT.bdf')
-f_name = os.path.join(cfg['data_dir'], '527_ref.edf')
-sleeps = {'1': {'file': f_name, 'ecg_invert': True}} # ecg_invert flips ecg signal, in case electrodes were placed inverse by mistake
+f_name = os.path.join(cfg['data_dir'], '2024-01-25_22-02-25-Alex-OBCI_F1.TXT.bdf')
+sleeps = {'1': {'file': f_name, 'ecg_invert': False}} # ecg_invert flips ecg signal, in case electrodes were placed inverse by mistake
 
 # overwrite image files if exists (HRV, Hypno in PNG)
 image_overwrite = True
@@ -60,7 +58,7 @@ eog_bpf = [.5,8]; emg_bpf = [10,70] # filter for EOG data
 sf_to = 256 # sampling rate to resample for fast processing
 
 #plots = ['Hypno', 'HRV', 'Features','Spectrum_YASA','Spectrum','Topomap', 'Radar'] # to plot all use: plots = ['Hypno', 'HRV', 'Features','Spectrum','Topomap']
-plots = ['Hypno', 'Spectrum_YASA']
+plots = ['Hypno', 'Spectrum_YASA','Features','Topomap']
 smooth_arousal = True # set True to smooth hypno by replace single awake epochs with previous epoch stage
 
 # Channel types naming, everything not included threated as EEG. 
@@ -77,6 +75,10 @@ topo_method = 'yasa_band_amp' # 'yasa_band_power' / 'mne_trf_morlet' / 'mne_fft_
 w_fft = 4; m_bandwidth = 1; m_freq_bandwidth = 2; tfr_time_bandwidth = 4; 
 topo_ref = 'AR' # 'REST' / 'AR' rereference type
 bp_relative = True # bandpass is relative or abs for topomap
+
+# sws & spindles extended metrics
+sp_ch = ['F7','F8']
+sw_ch = ['F7','F8']
 
 # multitaper spectrograms settings, can leave as is if not sure what is it
 spect_vlim = [6,24]; spect_lim = [1,16]; freq_lim = [1,30]
@@ -330,6 +332,90 @@ def plot_average(
     ax.set_ylabel("Amplitude (uV)")
     return ax
 
+def spindle_metrics(sp, sol, hypno, sp_ch=['F7','F8'], stages=[2], period=4.5*3600):
+    # Claude 4 Sonnet recommendations
+    # 1. N2 Spindle Density Ratio
+    # (F7_spindle_density + F8_spindle_density) / 2 in N2 stage
+    # Decision threshold: If < 0.8 spindles/minute → "Sleep architecture was fragmented - consider what disrupted deep sleep last night"
+    # Normal range: 0.8-1.5 spindles/minute based on your data
+    sp_total = sp.summary(grp_chan=True, grp_stage=True, aggfunc='mean')
+    spindle_density = np.mean(sp_total.loc[(2, sp_ch), 'Density'].values)
+    
+    # 2. Early/Late N2 Spindle Density Ratio:
+    # - Ratio < 0.5: Excellent deep sleep dominance early (very healthy)
+    # - Ratio 0.5-1.0: Normal healthy pattern
+    # - Ratio > 1.2: Concerning - possibly poor deep sleep or fragmented early sleep    f3hd_sum = spf3h.summary(grp_chan=True, grp_stage=True, aggfunc='mean')
+    sp_summary = sp.summary()
+    sp_data_first = sp_summary[
+        (sp_summary['Stage'].isin(stages)) &
+        (sp_summary['Channel'].isin(sp_ch)) & 
+        (sp_summary['Start'] > sol * 60) &  
+        (sp_summary['Start'] < sol * 60 + period)
+    ]    
+    stage_epochs_first = np.sum(np.isin(hypno[int(sol*2):int(sol*2 + period/30)], stages))
+    stage_duration_first = stage_epochs_first * 30 / 60  # Assuming 30s epochs
+    
+    first_density = (len(sp_data_first)/len(sp_ch))/stage_duration_first
+    
+    sp_data_last= sp_summary[
+        (sp_summary['Stage'].isin(stages)) &
+        (sp_summary['Channel'].isin(sp_ch)) & 
+        (sp_summary['Start'] > 60*len(hypno)/2 - period)
+    ]    
+    stage_epochs_last = np.sum(np.isin(hypno[int(len(hypno) - period/30):], stages))
+    stage_duration_last = stage_epochs_last * 30 / 60  # Assuming 30s epochs
+    
+    last_density = (len(sp_data_last)/len(sp_ch))/stage_duration_last
+    sp_early_late_density =  first_density/last_density
+    
+    # 3. Spindle Amplitude Consistency Score
+    # 1 - (Standard deviation of F7+F8 spindle amplitudes / Mean amplitude)
+    # Decision threshold: If < 0.7 → "Variable sleep depth - check for environmental disruptions or stress"
+    # Interpretation:
+    # Score close to 1.0: Very consistent spindle amplitudes → stable sleep depth
+    # Score < 0.7: High variability → potentially fragmented sleep architecture
+    # Negative scores: Extremely high variability (rare, but possible with artifacts)
+    
+    spindle_data = sp.summary()[(sp.summary()['Stage'] == 2) & (sp.summary()['Channel'].isin(sp_ch))]
+    spindle_cv = np.std(spindle_data['Amplitude'].values)/np.mean(spindle_data['Amplitude'].values)
+    return spindle_density, first_density, last_density, spindle_cv
+
+def sws_metrics(sw, sol, hypno, sw_ch = ['F7','F8'], stages=[2,3], period = 4.5*3600):
+    sw_summary = sw.summary()
+    # 1. SWS Power Stability Index
+    # Calculate coefficient of variation for SWS amplitude across the night
+    # Decision: If < 0.6 → "Inconsistent deep sleep - check sleep environment or stress levels"
+    sws_amplitudes = sw_summary['PTP']  # However you extract SWS events
+    sws_amp_cv = np.std(sws_amplitudes) / np.mean(sws_amplitudes)
+        
+    # 2. Early Night SWS Dominance Ratio
+    # First 3 hours SWS density / Last 3 hours SWS density
+    # (Similar to spindle approach but for slow waves)
+    # Decision: If < 2.0 → "Sleep pressure was low - consider earlier bedtime or more physical activity"
+    # Normal: Should be >2.0 since SWS heavily front-loads
+    sw_data_first = sw_summary[
+        (sw_summary['Stage'].isin(stages)) &
+        (sw_summary['Channel'].isin(sw_ch)) & 
+        (sw_summary['Start'] > sol * 60) &  
+        (sw_summary['Start'] < sol * 60 + period)
+    ]    
+    stage_epochs_first = np.sum(np.isin(hypno[int(sol*2):int(sol*2 + period/30)], stages))
+    stage_duration_first = stage_epochs_first * 30 / 60  # Assuming 30s epochs
+    
+    first_density = (len(sw_data_first)/len(sw_ch))/stage_duration_first
+    
+    sw_data_last= sw_summary[
+        (sw_summary['Stage'].isin(stages)) &
+        (sw_summary['Channel'].isin(sw_ch)) & 
+        (sw_summary['Start'] > 60*len(hypno)/2 - period)
+    ]    
+    stage_epochs_last = np.sum(np.isin(hypno[int(len(hypno) - period/30):], stages))
+    stage_duration_last = stage_epochs_last * 30 / 60  # Assuming 30s epochs
+    
+    last_density = (len(sw_data_last)/len(sw_ch))/stage_duration_last
+    sw_early_late_density =  first_density/last_density
+    return sws_amp_cv, first_density, last_density
+
 
 def electrode_side(c):
     if c[-1] == 'z':
@@ -354,15 +440,7 @@ if load_data or not ('raws' in globals() or 'raws' in locals()):
         raw.rename_channels(mapping)
 
         ch = raw.ch_names.copy()
-        
-        if 'Spectrum_YASA' in plots:
-            for spect_ch in ch:
-                sig = raw.get_data(spect_ch, units='uV')
-                png_file = f"{raw.info['meas_date'].strftime(cfg['file_dt_format'])} yasa spect {spect_ch}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)
-                fig = yasa.plot_spectrogram(sig[0], raw.info['sfreq'], None, trimperc=2.5)
-                plt.title(f'#{raw.info["meas_date"]} {spect_ch} YASA Spectrogram')
-                if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
-        
+                
         # classify channels by types: eog, emg, ecg, accelerometer
         eog = [elem for elem in ch if elem in eog_ch]
         if len(eog) > 0:
@@ -444,6 +522,15 @@ if load_data or not ('raws' in globals() or 'raws' in locals()):
         # resample if needed
         if sf_to != raw.info['sfreq']:
             raw.resample(sfreq=sf_to)
+            
+        if 'Spectrum_YASA' in plots:
+            for spect_ch in eeg_ch + eog + emg + ecg:
+                sig = raw.get_data(spect_ch, units='uV')
+                png_file = f"{raw.info['meas_date'].strftime(cfg['file_dt_format'])} yasa spect {spect_ch}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)
+                fig = yasa.plot_spectrogram(sig[0], raw.info['sfreq'], None, trimperc=2.5)
+                plt.title(f'#{raw.info["meas_date"]} {spect_ch} YASA Spectrogram')
+                if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
+
         
         raws_ori.append(raw.copy())
         # copy raw and make final changes in a copy
@@ -475,7 +562,6 @@ if load_data or not ('raws' in globals() or 'raws' in locals()):
                 ch_eeg = [x.replace('-'+right_ref, '') for x in raw_c.ch_names if x not in non_eeg_ch]
                 ch_eeg_to_rename = [x for x in raw_c.ch_names if x not in non_eeg_ch]
                 raw_c.rename_channels(dict(zip(ch_eeg_to_rename, ch_eeg)))
-    
             elif electrode_side(ref) == 'right':
                 left_ref = ref[:-1] + str(int(ref[-1])-1)
                 right_ref = ref
@@ -522,8 +608,8 @@ if load_data or not ('raws' in globals() or 'raws' in locals()):
 if load_hypno or not ('hypnos' in globals() or 'hypnos' in locals()):
     hypnos = []; probs = []; hypnos_max = []; hypnos_adj = []
     hypno_dfs = []; sleep_stats_infos = []; acc_aggs = []
-if load_sp_sw or not ('sps' in globals() or 'sps' in locals()):
-    sps = []; sws =[]
+if load_sp_sw or not ('sps' in globals() or 'sps' in locals() or 'sws' in globals() or 'sws' in locals()):
+    sps = []; sws =[]; sp_metrics=[]; sw_metrics=[]
 
 for index, raw in enumerate(raws):
     # list of eeg channels names without ref
@@ -619,9 +705,21 @@ for index, raw in enumerate(raws):
     if load_sp_sw or (len(sps) < 1):
         sp = yasa.spindles_detect(raw, include=(2), hypno=yasa.hypno_upsample_to_data(hypnos_adj[index], sf_hypno=1/30, data=raw_c))
         sps.append(sp)
+
+        if not (1 == np.sum(np.isin(sp_ch, eeg_ch_names))/len(sp_ch)):
+            sp_ch = [eeg_ch_names[0]]
+        
+        sp_metric = spindle_metrics(sp, sleep_stats_infos[index]['SOL_ADJ'], hypnos_adj[index], sp_ch=sp_ch, stages=[2], period=4.5*3600)
+        sp_metrics.append(sp_metric)
+
         sw = yasa.sw_detect(raw, include=(2,3), hypno=yasa.hypno_upsample_to_data(hypnos_adj[index], sf_hypno=1/30, data=raws[index]))
         sws.append(sw)
-
+        
+        if not (1 == np.sum(np.isin(sw_ch, eeg_ch_names))/len(sw_ch)):
+            sw_ch = [eeg_ch_names[0]]
+        sw_metric = sws_metrics(sw, sleep_stats_infos[index]['SOL_ADJ'], hypnos_adj[index], sw_ch=sw_ch, stages=[2,3], period=4.5*3600)
+        sw_metrics.append(sw_metric)
+    
 if 'Hypno' in plots:
     for index, raw in enumerate(raws):
         eeg_ch_names = list(refs_ch[index].keys())
@@ -1187,6 +1285,9 @@ if 'Features' in plots:
     
     for index, raw in enumerate(raws):
         plot_average(sps[index], "spindles", ax=ax[2], legend=False)
+        if len(sp_metrics) >= index:
+            sp_metric = sp_metrics[index]
+            ax[2].set_title(f'Density: {round(sp_metric[0],2)} CV: {round(sp_metric[3],2)} {sp_ch}\n Early {round(sp_metric[1],2)} Late {round(sp_metric[2],2)} E/L {round(sp_metric[1]/sp_metric[2],2)}')        
 
     for index, raw in enumerate(raws):
         axe = plot_average(sws[index], 'sw', center='PosPeak', ax=ax[0], legend=False);
@@ -1198,6 +1299,9 @@ if 'Features' in plots:
         amps = round(sws[index].summary(grp_stage=True, grp_chan=True)[['Count','PTP']]).reset_index()
         max_amp = amps['Count'].argmax()
         axe.set_title(f'SW Amp: {amps["Count"][max_amp]}*{round(amps["PTP"][max_amp])}{units["amp"]} for {amps["Channel"][max_amp]}-{refs_ch[index][amps["Channel"][max_amp]]} in N{amps["Stage"][max_amp]}')
+        if len(sw_metrics) >= index:
+            sw_metric = sw_metrics[index]
+            axe.set_title(f'SW Amp: {amps["Count"][max_amp]}*{round(amps["PTP"][max_amp])}{units["amp"]} for {amps["Channel"][max_amp]}-{ch_eeg_refs[amps["Channel"][max_amp]]} in N{amps["Stage"][max_amp]}\nCV: {round(sw_metric[0],2)} Early {round(sw_metric[1],2)} Late {round(sw_metric[2],2)}, E/L {round(sw_metric[1]/sw_metric[2],2)} {sw_ch}')
 
     plt.tight_layout(rect=[0, 0, 1, 0.99])
     png_file = f"{dts[index].strftime(cfg['file_dt_format'])} PSD {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    

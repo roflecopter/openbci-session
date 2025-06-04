@@ -1,3 +1,4 @@
+
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.dates as mdates
@@ -19,7 +20,7 @@ from time import sleep
 
 # config, if relative path not working then use explicit path to working dir (repo dir with scripts and yml) or modify working directory in IDE/GUI settings
 # working_dir = '/path/to/openbci-session'
-working_dir = os.getcwd()
+#working_dir = os.getcwd()
 cfg_file = os.path.join(working_dir, "sleep_analysis.yml")
 
 # rename sleep_analysis.yml.sample to sleep_analysis.yml and set directories
@@ -45,7 +46,7 @@ device = 'openbci'
 user = 'user'
 
 # make array with bdf files recorded with session_start.py
-f_name = os.path.join(cfg['data_dir'], '2024-01-25_22-02-25-Alex-OBCI_F1.TXT.bdf')
+f_name = os.path.join(cfg['data_dir'], '62a.edf')
 sleeps = {'1': {'file': f_name, 'ecg_invert': False}} # ecg_invert flips ecg signal, in case electrodes were placed inverse by mistake
 
 # overwrite image files if exists (HRV, Hypno in PNG)
@@ -57,8 +58,8 @@ nf = [50,1] # notch filter, set to 50 or 60 Hz powerline noise freq depending on
 eog_bpf = [.5,8]; emg_bpf = [10,70] # filter for EOG data
 sf_to = 256 # sampling rate to resample for fast processing
 
-#plots = ['Hypno', 'HRV', 'Features','Spectrum_YASA','Spectrum','Topomap', 'Radar'] # to plot all use: plots = ['Hypno', 'HRV', 'Features','Spectrum','Topomap']
-plots = ['Hypno', 'Spectrum_YASA','Features','Topomap']
+plots = ['Hypno', 'HRV', 'Features','Spectrum_YASA','Spectrum','Topomap', 'Radar'] # to plot all use: plots = ['Hypno', 'HRV', 'Features','Spectrum','Topomap']
+#plots = ['Hypno', 'Spectrum_YASA','Features','Topomap']
 smooth_arousal = True # set True to smooth hypno by replace single awake epochs with previous epoch stage
 
 # Channel types naming, everything not included threated as EEG. 
@@ -1028,7 +1029,7 @@ if load_bp or not ('bps' in globals() or 'bps' in locals()):
             forward = mne.make_forward_solution(raw_bp.info, trans=None, src=src, bem=sphere)
             raw_bp.set_eeg_reference("REST", forward=forward)
         elif topo_ref == 'AR':
-            raw.set_eeg_reference(ref_channels = 'average')
+            raw_bp.set_eeg_reference(ref_channels = 'average')
 
         raws_bp.append(raw_bp)
         bps_s = []
@@ -1125,7 +1126,6 @@ if 'Spectrum' in plots:
             ch_eeg_sorted = sorted(eeg_ch_names, key=order_value)
 
             raw  = raws[index].copy().pick(ch_eeg_sorted)
-
             for ch_index, ch in enumerate(ch_eeg_sorted):
                 spect, stimes, sfreqs = multitaper_spectrogram(
                     raw.get_data(picks = [ch], units='uV'), raw.info['sfreq'], 
@@ -1143,7 +1143,6 @@ if 'Spectrum' in plots:
         eeg_ch_names = list(refs_ch[index].keys())
         if re_ref: eeg_ch_names.remove(refs[index])
         raw  = raws[index].copy().pick(eeg_ch_names)
-        
         # summary spectrum
         fig, ax = plt.subplots(figsize=(14, 5))
         old_fontsize = plt.rcParams["font.size"]
@@ -1310,76 +1309,77 @@ if 'Features' in plots:
 
 if 'Radar' in plots:
     for index, key in enumerate(raws_ori):
-        sleep_stats_info = sleep_stats_infos[index]
-        ecg_stats_info = ecg_stats[index]
-        n3 = sleep_stats_info['N3']; n3_goal = 90; n3_rng = 20
-        rem = sleep_stats_info['REM']; rem_goal = 105; rem_rng = 30
-        awk = sleep_stats_info['SOL_ADJ']+sleep_stats_info['WASO_ADJ']; awk_goal = 30; awk_rng = 20
-        hr = ecg_stats_info['hr']; hr_goal = 45; hr_rng = 10
-        hrv = ecg_stats_info['rmssd_n3']; hrv_goal = 35; hrv_rng = 25
-        if len(acc) > 0: 
-            mh = ecg_stats_info['mh']
-        else:
-            mh = 4.3
-        mh_goal = 4.3; mh_rng = 2
-        
-        values = [
-            round(100*(n3/n3_goal)),
-            round(100*(rem/rem_goal)),
-            round(100*(awk_goal/awk)),
-            round(100*(hr_goal/hr)),
-            round(100*(hrv/hrv_goal)),
-            round(100*(mh_goal/mh)),
-        ]
-        
-        n3_d = round(100*(n3/n3_goal) - 100)
-        rem_d = round(100*(rem/rem_goal) - 100)
-        awk_d = round(100*(awk_goal/awk) - 100)
-        hr_d = round(100*(hr_goal/hr) - 100)
-        hrv_d = round(100*(hrv/hrv_goal) - 100)
-        mh_d = round(100*(mh_goal/mh) - 100)
-        
-        labels = [f'N3 {n3_d if n3_d < 0 else "+" + str(n3_d)}%', 
-                  f'REM {rem_d if rem_d < 0 else "+" + str(rem_d)}%',
-                  f'AWAKE {awk_d if awk_d < 0 else "+" + str(awk_d)}%',
-                  f'HR {hr_d if hr_d < 0 else "+" + str(hr_d)}%',
-                  f'HRV N3 {hrv_d if hrv_d < 0 else "+" + str(hrv_d)}%',
-                  f'Move/h {mh_d if mh_d < 0 else "+" + str(mh_d)}%',
-                  ]
-
-        
-        num_vars = len(labels)
-        angles_ul = np.linspace(0, 2 * np.pi, num_vars, endpoint=False)
-        angles = angles_ul.tolist()
-        values += values[:1]
-        angles += angles[:1]
-        
-        old_fontsize = plt.rcParams["font.size"]
-        plt.rcParams.update({"font.size": 14})
-        fig, ax = plt.subplots(figsize=(9, 8), subplot_kw={'projection': 'polar'})
-        ax.plot(np.linspace(0, 2 * np.pi, 100), [100] * 100, color='green', linewidth=2)
-        ax.plot(angles, values, color='#1aaf6c', linewidth=1)
-        ax.fill(angles, values, color='#1aaf6c', alpha=0.25)
-        ax.set_theta_offset(np.pi / 2)
-        ax.set_theta_direction(-1)
-        ax.set_thetagrids(np.degrees(angles_ul), labels)
-        for label, angle in zip(ax.get_xticklabels(), angles):
-          if angle in (0, np.pi):
-            label.set_horizontalalignment('center')
-          elif 0 < angle < np.pi:
-            label.set_horizontalalignment('left')
-          else:
-            label.set_horizontalalignment('right')
-        ax.set_ylim(0, 120)
-        ax.set_rlabel_position(180 / num_vars)
-        ax.tick_params(colors='#222222')
-        ax.tick_params(axis='y', labelsize=8)
-        ax.grid(color='#AAAAAA')
-        ax.spines['polar'].set_color('#222222')
-        ax.set_facecolor('#FAFAFA')
-        plt.tight_layout()
-        plt.rcParams.update({"font.size": old_fontsize})
-        
-        png_file = f"{dts[index].strftime(cfg['file_dt_format'])} Radar {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
-        if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
-        plt.rcParams.update({"font.size": old_fontsize})
+        if len(ecg_stats) > 0:
+            sleep_stats_info = sleep_stats_infos[index]
+            ecg_stats_info = ecg_stats[index]
+            n3 = sleep_stats_info['N3']; n3_goal = 90; n3_rng = 20
+            rem = sleep_stats_info['REM']; rem_goal = 105; rem_rng = 30
+            awk = sleep_stats_info['SOL_ADJ']+sleep_stats_info['WASO_ADJ']; awk_goal = 30; awk_rng = 20
+            hr = ecg_stats_info['hr']; hr_goal = 45; hr_rng = 10
+            hrv = ecg_stats_info['rmssd_n3']; hrv_goal = 35; hrv_rng = 25
+            if len(acc) > 0: 
+                mh = ecg_stats_info['mh']
+            else:
+                mh = 4.3
+            mh_goal = 4.3; mh_rng = 2
+            
+            values = [
+                round(100*(n3/n3_goal)),
+                round(100*(rem/rem_goal)),
+                round(100*(awk_goal/awk)),
+                round(100*(hr_goal/hr)),
+                round(100*(hrv/hrv_goal)),
+                round(100*(mh_goal/mh)),
+            ]
+            
+            n3_d = round(100*(n3/n3_goal) - 100)
+            rem_d = round(100*(rem/rem_goal) - 100)
+            awk_d = round(100*(awk_goal/awk) - 100)
+            hr_d = round(100*(hr_goal/hr) - 100)
+            hrv_d = round(100*(hrv/hrv_goal) - 100)
+            mh_d = round(100*(mh_goal/mh) - 100)
+            
+            labels = [f'N3 {n3_d if n3_d < 0 else "+" + str(n3_d)}%', 
+                      f'REM {rem_d if rem_d < 0 else "+" + str(rem_d)}%',
+                      f'AWAKE {awk_d if awk_d < 0 else "+" + str(awk_d)}%',
+                      f'HR {hr_d if hr_d < 0 else "+" + str(hr_d)}%',
+                      f'HRV N3 {hrv_d if hrv_d < 0 else "+" + str(hrv_d)}%',
+                      f'Move/h {mh_d if mh_d < 0 else "+" + str(mh_d)}%',
+                      ]
+    
+            
+            num_vars = len(labels)
+            angles_ul = np.linspace(0, 2 * np.pi, num_vars, endpoint=False)
+            angles = angles_ul.tolist()
+            values += values[:1]
+            angles += angles[:1]
+            
+            old_fontsize = plt.rcParams["font.size"]
+            plt.rcParams.update({"font.size": 14})
+            fig, ax = plt.subplots(figsize=(9, 8), subplot_kw={'projection': 'polar'})
+            ax.plot(np.linspace(0, 2 * np.pi, 100), [100] * 100, color='green', linewidth=2)
+            ax.plot(angles, values, color='#1aaf6c', linewidth=1)
+            ax.fill(angles, values, color='#1aaf6c', alpha=0.25)
+            ax.set_theta_offset(np.pi / 2)
+            ax.set_theta_direction(-1)
+            ax.set_thetagrids(np.degrees(angles_ul), labels)
+            for label, angle in zip(ax.get_xticklabels(), angles):
+              if angle in (0, np.pi):
+                label.set_horizontalalignment('center')
+              elif 0 < angle < np.pi:
+                label.set_horizontalalignment('left')
+              else:
+                label.set_horizontalalignment('right')
+            ax.set_ylim(0, 120)
+            ax.set_rlabel_position(180 / num_vars)
+            ax.tick_params(colors='#222222')
+            ax.tick_params(axis='y', labelsize=8)
+            ax.grid(color='#AAAAAA')
+            ax.spines['polar'].set_color('#222222')
+            ax.set_facecolor('#FAFAFA')
+            plt.tight_layout()
+            plt.rcParams.update({"font.size": old_fontsize})
+            
+            png_file = f"{dts[index].strftime(cfg['file_dt_format'])} Radar {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
+            if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
+            plt.rcParams.update({"font.size": old_fontsize})

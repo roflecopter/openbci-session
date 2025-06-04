@@ -1028,7 +1028,7 @@ if load_bp or not ('bps' in globals() or 'bps' in locals()):
             forward = mne.make_forward_solution(raw_bp.info, trans=None, src=src, bem=sphere)
             raw_bp.set_eeg_reference("REST", forward=forward)
         elif topo_ref == 'AR':
-            raw.set_eeg_reference(ref_channels = 'average')
+            raw_bp.set_eeg_reference(ref_channels = 'average')
 
         raws_bp.append(raw_bp)
         bps_s = []

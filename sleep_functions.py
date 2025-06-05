@@ -334,7 +334,7 @@ def sws_metrics(sw, sol, hypno, sw_ch = ['F7','F8'], stages=[2,3], period = 4.5*
     return sws_amp_cv, first_density, last_density
 
 
-def plot_rolling_spindle_density(sp_summary, session_start, channels=['F7', 'F8'], 
+def plot_rolling_spindle_density(sp_summary, dts, cfg, channels=['F7', 'F8'], 
                                 window_minutes=10, stage_filter=[2], type_label ='spindle', verbose=False):
     """
     Create a rolling spindle/sws density plot over time
@@ -364,7 +364,7 @@ def plot_rolling_spindle_density(sp_summary, session_start, channels=['F7', 'F8'
         return
     
     # Convert Start times to datetime
-    filtered_spindles['DateTime'] = pd.to_datetime(session_start) + pd.to_timedelta(filtered_spindles['Start'], unit='s')
+    filtered_spindles['DateTime'] = pd.to_datetime(dts) + pd.to_timedelta(filtered_spindles['Start'], unit='s')
     
     # Create time bins (every minute)
     start_time = filtered_spindles['DateTime'].min().floor('min')
@@ -405,7 +405,7 @@ def plot_rolling_spindle_density(sp_summary, session_start, channels=['F7', 'F8'
     ax1.fill_between(density_df['time'], density_df['density'], 
                      alpha=0.3, color='lightblue')
     ax1.set_ylabel(f'{type_label.capitalize()} Density\n({type_label}s/min/channel)', fontsize=12)
-    ax1.set_title(f'#{session_start} Rolling {window_minutes}-Minute {type_label.capitalize()} Density Over Time\n'
+    ax1.set_title(f'{dts.strftime(cfg["plot_dt_format"])} Rolling {window_minutes}-Minute {type_label.capitalize()} Density Over Time\n'
                   f'Channels: {", ".join(channels)} | Stages: {stage_filter}', fontsize=14)
     ax1.grid(True, alpha=0.3)
     
@@ -1050,10 +1050,10 @@ def process_bp(raw, channels, ref_channel, topo_ref, hypno_adj, stages, re_ref, 
         bps_s.append(bp_b)
     return raw_bp, bps_s
 
-def topomap_plot(raw_bp, bps_s, bp_relative, topo_ref, sig_specs, topo_method, hypno_adj, stages, stages_plot, bp_bands, units):
+def topomap_plot(dts, raw_bp, bps_s, bp_relative, topo_ref, sig_specs, topo_method, hypno_adj, stages, stages_plot, bp_bands, units, cfg):
     fig, axes = plt.subplots(len(stages_plot),len(bp_bands), 
              figsize=(len(bp_bands)*2, len(stages_plot)*2))
-    plot_type = f'{raw_bp.info["meas_date"]} Amplitude (ref={topo_ref})'; plot_params = ''
+    plot_type = f'{dts.strftime(cfg["plot_dt_format"])} Amplitude (ref={topo_ref})'; plot_params = ''
     hypno_up = yasa.hypno_upsample_to_data(hypno_adj, sf_hypno=1/30, data=raw_bp)
     for s_index, s in enumerate(stages_plot):
         for b in range(len(bp_bands)):
@@ -1122,13 +1122,12 @@ def plot_multitaper_spect_all(raw, dts, channels, spects_c, stimes_c, sfreqs_c, 
     fig, ax = plt.subplots(figsize=(14, 5))
     old_fontsize = plt.rcParams["font.size"]
     plt.rcParams.update({"font.size": 18})
-    fig.suptitle(f'#{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} Spectrogram, {spect_specs}')
+    fig.suptitle(f'{dts.strftime(cfg["plot_dt_format"])} Spectrogram, {spect_specs}')
 
     spect, stimes, sfreqs = np.array(spects_c).max(axis=0), stimes_c[0], sfreqs_c[0]
     spect_data = nanpow2db(spect)
     
-    start_time = raw.info['meas_date']
-    times = [start_time + timedelta(seconds=int(s)) for s in stimes]
+    times = [dts + timedelta(seconds=int(s)) for s in stimes]
     
     dtx = times[1] - times[0]
     dy = sfreqs[1] - sfreqs[0]
@@ -1194,15 +1193,14 @@ def plot_multitaper_spect_ch(raw, dts, channels, ref_ch, spects_c, stimes_c, sfr
                   figsize=(14, n_ax*5))
         old_fontsize = plt.rcParams["font.size"]
         plt.rcParams.update({"font.size": 18})
-        fig.suptitle(f'#{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} Spectrogram, {spect_specs}')
+        fig.suptitle(f'{dts.strftime(cfg["plot_dt_format"])} Spectrogram, {spect_specs}')
         axes = axes.flatten()
         idx_range = cy*n_ax + np.arange(0, n_ax, 1)
         for cch_index, cch in enumerate(ch_eeg_sorted[min(idx_range):(max(idx_range)+1)]):
             spect, stimes, sfreqs = spects_c[cy*n_ax + cch_index], stimes_c[cch_index], sfreqs_c[cy*n_ax + cch_index]
             spect_data = nanpow2db(spect)
             
-            start_time = raw.info['meas_date']
-            times = [start_time + timedelta(seconds=int(s)) for s in stimes]
+            times = [dts + timedelta(seconds=int(s)) for s in stimes]
             
             dtx = times[1] - times[0]
             dy = sfreqs[1] - sfreqs[0]
@@ -1235,3 +1233,115 @@ def plot_multitaper_spect_ch(raw, dts, channels, ref_ch, spects_c, stimes_c, sfr
         plt.subplots_adjust(left=0.01, right=0.99, top=0.9, bottom=0.01) 
         figs.append(fig)
     return figs
+
+def psd_plot(dts, raw_ori, channels, ref_ch, sp, sp_ch, sp_metric, sw, sw_ch, sw_metric, freq_method, w_fft, freq_lim, units, sig_specs, cfg, nj):
+    fig, ax = plt.subplots(2, 2, figsize=(16, 12))
+    ax = ax.flatten()
+    raw  = raw_ori.copy().pick(channels)
+    if freq_method == 'mne_psd_welch':
+        n_fft = int(w_fft * raw.info['sfreq'])
+        psds, freqs = mne.time_frequency.psd_array_welch(
+            raw.get_data(units='uV'), raw.info['sfreq'],
+            fmin=freq_lim[0], fmax=freq_lim[1],
+            n_fft= n_fft, output = 'power', n_jobs = nj)
+        psds = 10 * np.log10(psds) # convert to dB
+        plot_unit = units['psd_dB']; plot_type = 'PSD'
+        plot_params = f'fft_window={w_fft}s'
+    for c in range(len(channels)):
+        ax[3].plot(freqs, psds[c], label=f'{channels[c]}-{ref_ch[channels[c]]}', linewidth=1)
+    ax[3].legend()
+    ax[3].set(title=f'', xlabel='Frequency (Hz)', ylabel=plot_unit)
+    old_fontsize = plt.rcParams["font.size"]
+    plt.rcParams.update({"font.size": 20})
+    fig.suptitle(f'{dts.strftime(cfg["plot_dt_format"])} {plot_type} ({sig_specs}, [{plot_params}]')
+    
+    plot_average(sp, "spindles", ax=ax[2], legend=False)
+    if sp_metric is not None:
+        ax[2].set_title(f'Density: {round(sp_metric[0],2)} CV: {round(sp_metric[3],2)} {sp_ch}\n Early {round(sp_metric[1],2)} Late {round(sp_metric[2],2)} E/L {round(sp_metric[1]/sp_metric[2],2)}')        
+
+    axe = plot_average(sw, 'sw', center='PosPeak', ax=ax[0], legend=False);
+    amps = round(sw.summary(grp_chan=True)[['Count','PTP']]).reset_index()
+    max_amp = amps['Count'].argmax()
+    axe.set_title(f'SW Amp: {amps["Count"][max_amp]}*{round(amps["PTP"][max_amp])}{units["amp"]} for {amps["Channel"][max_amp]}-{ref_ch[amps["Channel"][max_amp]]}')
+
+    axe = plot_average(sw, 'sw', center='PosPeak', hue="Stage", ax=ax[1], legend=True)
+    amps = round(sw.summary(grp_stage=True, grp_chan=True)[['Count','PTP']]).reset_index()
+    max_amp = amps['Count'].argmax()
+    axe.set_title(f'SW Amp: {amps["Count"][max_amp]}*{round(amps["PTP"][max_amp])}{units["amp"]} for {amps["Channel"][max_amp]}-{ref_ch[amps["Channel"][max_amp]]} in N{amps["Stage"][max_amp]}')
+    if sw_metric is not None:
+        axe.set_title(f'SW Amp: {amps["Count"][max_amp]}*{round(amps["PTP"][max_amp])}{units["amp"]} for {amps["Channel"][max_amp]}-{ref_ch[amps["Channel"][max_amp]]} in N{amps["Stage"][max_amp]}\nCV: {round(sw_metric[0],2)} Early {round(sw_metric[1],2)} Late {round(sw_metric[2],2)}, E/L {round(sw_metric[1]/sw_metric[2],2)} {sw_ch}')
+
+    plt.tight_layout(rect=[0, 0, 1, 0.99])
+    plt.rcParams.update({"font.size": old_fontsize})
+    return fig
+
+def plot_radar(dts, sleep_stats_info, ecg_stats_info, acc, cfg, n3_goal = 90, rem_goal = 105, awk_goal = 30, hr_goal = 45, hrv_goal = 35, mh_goal = 4.3):
+    n3 = sleep_stats_info['N3']
+    rem = sleep_stats_info['REM']
+    awk = sleep_stats_info['SOL_ADJ']+sleep_stats_info['WASO_ADJ']
+    hr = ecg_stats_info['hr']
+    hrv = ecg_stats_info['rmssd_n3']
+    if len(acc) > 0: 
+        mh = ecg_stats_info['mh']
+    else:
+        mh = 4.3
+    
+    
+    values = [
+        round(100*(n3/n3_goal)),
+        round(100*(rem/rem_goal)),
+        round(100*(awk_goal/awk)),
+        round(100*(hr_goal/hr)),
+        round(100*(hrv/hrv_goal)),
+        round(100*(mh_goal/mh)),
+    ]
+    
+    n3_d = round(100*(n3/n3_goal) - 100)
+    rem_d = round(100*(rem/rem_goal) - 100)
+    awk_d = round(100*(awk_goal/awk) - 100)
+    hr_d = round(100*(hr_goal/hr) - 100)
+    hrv_d = round(100*(hrv/hrv_goal) - 100)
+    mh_d = round(100*(mh_goal/mh) - 100)
+    
+    labels = [f'N3 {n3_d if n3_d < 0 else "+" + str(n3_d)}%', 
+              f'REM {rem_d if rem_d < 0 else "+" + str(rem_d)}%',
+              f'AWAKE {awk_d if awk_d < 0 else "+" + str(awk_d)}%',
+              f'HR {hr_d if hr_d < 0 else "+" + str(hr_d)}%',
+              f'HRV N3 {hrv_d if hrv_d < 0 else "+" + str(hrv_d)}%',
+              f'Move/h {mh_d if mh_d < 0 else "+" + str(mh_d)}%',
+              ]
+
+    
+    num_vars = len(labels)
+    angles_ul = np.linspace(0, 2 * np.pi, num_vars, endpoint=False)
+    angles = angles_ul.tolist()
+    values += values[:1]
+    angles += angles[:1]
+    
+    old_fontsize = plt.rcParams["font.size"]
+    plt.rcParams.update({"font.size": 14})
+    fig, ax = plt.subplots(figsize=(9, 8), subplot_kw={'projection': 'polar'})
+    ax.plot(np.linspace(0, 2 * np.pi, 100), [100] * 100, color='green', linewidth=2)
+    ax.plot(angles, values, color='#1aaf6c', linewidth=1)
+    ax.fill(angles, values, color='#1aaf6c', alpha=0.25)
+    ax.set_theta_offset(np.pi / 2)
+    ax.set_theta_direction(-1)
+    ax.set_thetagrids(np.degrees(angles_ul), labels)
+    for label, angle in zip(ax.get_xticklabels(), angles):
+      if angle in (0, np.pi):
+        label.set_horizontalalignment('center')
+      elif 0 < angle < np.pi:
+        label.set_horizontalalignment('left')
+      else:
+        label.set_horizontalalignment('right')
+    ax.set_ylim(0, 120)
+    ax.set_rlabel_position(180 / num_vars)
+    ax.tick_params(colors='#222222')
+    ax.tick_params(axis='y', labelsize=8)
+    ax.grid(color='#AAAAAA')
+    ax.spines['polar'].set_color('#222222')
+    ax.set_facecolor('#FAFAFA')
+    ax.set_title(f'{dts.strftime(cfg["plot_dt_format"])} Radar')
+    plt.tight_layout()
+    plt.rcParams.update({"font.size": old_fontsize})
+    return fig

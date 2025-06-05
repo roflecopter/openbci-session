@@ -11,7 +11,6 @@ import yaml
 import yasa
 
 from datetime import datetime, timedelta
-
 from time import sleep
 
 # config, if relative path not working then use explicit path to working dir (repo dir with scripts and yml) or modify working directory in IDE/GUI settings
@@ -36,68 +35,55 @@ from sleep_functions import acc_process, plot_radar, psd_plot, plot_multitaper_s
 np.set_printoptions(suppress=True, formatter={'float_kind':'{:f}'.format})
 pd.set_option('future.no_silent_downcasting', True)
 
-nj = 15 # n_jobs for multiprocessing, usually n_cpu - 1
+nj = cfg['n_jobs'] # n_jobs for multiprocessing, usually n_cpu - 1
 
 old_fontsize = plt.rcParams["font.size"]
 plt.rcParams.update({"font.size": 8})
 
 # used for cache/image file names
-device = 'openbci'
-user = 'user'
+device = cfg['device']
+user = cfg['user']
+sleeps = cfg_base['sleeps']
+settings = cfg_base['settings']
 
-# make array with bdf files recorded with session_start.py
-fnames = [
-    os.path.join(cfg['data_dir'], '2025-05-30_01-18-35-max-OBCI_3D.TXT.bdf'),
-    os.path.join(cfg['data_dir'], 'yasa_example_night_young.edf'),
-    os.path.join(cfg['data_dir'], '62a.edf'),
-    ]
-sleeps = {
-    # '1': {'file': fnames[0], 'ecg_invert': False, 're_ref': True, 
-    #       'sw_ch': ['F7','F8'], 'sp_ch': ['F7','F8'], 
-    #       'sp_slow_ch': ['F7','F8'], 'sp_fast_ch':['O1','O2'], },
-    # '2': {'file': fnames[1], 'ecg_invert': False, 're_ref': False, 
-    #       'sw_ch': ['F3-A2','F4-A1'], 'sp_ch': ['C3-A2','C4-A1'], 
-    #       'sp_slow_ch': ['C3-A2','C4-A1','CZ-A2'], 'sp_fast_ch':['P3-A2','P4-A1','PZ-A2'], },
-    '3': {'file': fnames[2], 'ecg_invert': False, 're_ref': False, 
-          'sw_ch': ['C4-A1'], 'sp_ch': ['C4-A1'], 
-          'sp_slow_ch': ['C4-A1'], 'sp_fast_ch':['C4-A1'], },
-          }
 # ecg_invert: flips ecg signal, in case electrodes were placed inverse by mistake
 # re_ref: set to True if you have recorded EEG with a single Ref channel and want to re-reference each channel to opposite hemisphere refs, e.g. F7-T3,F8-T3 will be changed to F7-T4,F8-T3. Always set to False if you have multiple refs
 # sp_ch - channels used for spindle density analysis. same for sw_ch
 # sp_slow_ch & sp_fast_ch - channels used for slow vs fast spindles analysis
 
 # overwrite image files if exists (HRV, Hypno in PNG)
-image_overwrite = True
+image_overwrite = settings['image_overwrite']
 
 # signal filtering
-bpf = [.35, None] # band pass filter, [0.1, None] or [.35, 45]
-nf = [50,1] # notch filter, set to 50 or 60 Hz powerline noise freq depending on your country
-eog_bpf = [.5,8]; emg_bpf = [10,70] # filter for EOG data
-sf_to = 256 # sampling rate to resample for fast processing
+bpf = settings['bpf'] # band pass filter, [0.1, None] or [.35, 45]
+nf = settings['nf'] # notch filter, set to 50 or 60 Hz powerline noise freq depending on your country
+eog_bpf = settings['eog_bpf']; emg_bpf = settings['emg_bpf'] # filter for EOG data
+sf_to = settings['sf_to'] # sampling rate to resample for fast processing
 
-plots = ['Hypno', 'HRV', 'Features','Spectrum_YASA','Spectrum','Topomap', 'Spindles', 'SlowWaves', 'SpindlesFreq', 'Radar'] # to plot all use: plots = ['Hypno', 'HRV', 'Features','Spectrum_YASA','Spectrum','Topomap', 'Spindles', 'SlowWaves', 'SpindlesFreq', 'Radar']
-smooth_arousal = True # set True to smooth hypno by replace single awake epochs with previous epoch stage
+plots = settings['plots']
+smooth_arousal = settings['smooth_arousal'] # set True to smooth hypno by replace single awake epochs with previous epoch stage
 
 # Channel types naming, everything not included threated as EEG. 
 # Put unused channels to misc_ch
 # Append ecg_ch if you have ECG channel with custom name
-misc_ch = ['E1-Fpz', 'E2-Fpz']; acc_ch = ['ACC_X', 'ACC_Y', 'ACC_Z']
-eog_ch = ['EOG-RL', 'ROC-A1','LOC-A2']; emg_ch = ['EMG-N','EMG1-EMG2']; ecg_ch = ['ECG', 'ECG-AS', 'ECG-AI', 'ECG-RA-V2','EKG-R-EKG-L']
-n_acc = 3 # number accelerometer channels, 3 for OpenBCI
+misc_ch = settings['misc_ch']; acc_ch = settings['acc_ch']
+eog_ch = settings['eog_ch']; emg_ch = settings['emg_ch']
+ecg_ch = settings['ecg_ch']; n_acc = settings['n_acc'] # number accelerometer channels, 3 for OpenBCI
 
 # methods for calculating band power and topoplots
-freq_method = 'mne_psd_welch' # 'mne_psd_welch' / 'mne_trf_morlet' / 'mne_psd_multitaper' / 'mne_tfr_multitaper'
-topo_method = 'yasa_band_amp' # 'yasa_band_power' / 'mne_trf_morlet' / 'mne_fft_welch'
-w_fft = 4; m_bandwidth = 1; m_freq_bandwidth = 2; tfr_time_bandwidth = 4; 
-topo_ref = 'AR' # 'AR' rereference type, 'REST' is not working yet
-bp_relative = True # bandpass is relative or abs for topomap
+freq_method = settings['freq_method'] # 'mne_psd_welch' / 'mne_trf_morlet' / 'mne_psd_multitaper' / 'mne_tfr_multitaper'
+topo_method = settings['topo_method'] # 'yasa_band_power' / 'mne_trf_morlet' / 'mne_fft_welch'
+topo_ref = settings['topo_ref'] # 'AR' rereference type, 'REST' is not supported yet
+
+w_fft = settings['w_fft']; m_bandwidth = settings['m_bandwidth']
+m_freq_bandwidth = settings['m_freq_bandwidth']; tfr_time_bandwidth = settings['tfr_time_bandwidth']
+bp_relative = settings['bp_relative'] # bandpass is relative or abs for topomap
 
 # multitaper spectrograms settings, can leave as is if not sure what is it
-spect_vlim = [6,24]; spect_lim = [1,16]; freq_lim = [1,30]
-time_bandwidth = 24 # Set time-half bandwidth
+spect_vlim = settings['spect_vlim']; spect_lim = settings['spect_lim'] 
+freq_lim = settings['freq_lim']; time_bandwidth = settings['time_bandwidth'] # Set time-half bandwidth
 num_tapers = time_bandwidth*2 - 1  # Set number of tapers (optimal is time_bandwidth*2 - 1)
-window_params = [60, 30]  # Window size is Xs with step size of Ys
+window_params = settings['window_params']  # Window size is Xs with step size of Ys
 
 # units for labels
 units = {'psd_dB': 'dB(µV²/Hz)', 'amp': 'µV', 'p': 'µV²', 'p_dB': 'dB(µV²)', 'rel': '%'}
@@ -136,9 +122,9 @@ if load_data:
     #raws = []; refs = []; refs_ch = []; sessions =[]; accs = []; eegs = []; ecgs = []; eogs = []; miscs = []; raws_ori = []; dts = []
     for index, key in enumerate(sleeps):
         if sleeps[key]['file'].endswith('edf') or sleeps[key]['file'].endswith('EDF'):
-            raw = mne.io.read_raw_edf(sleeps[key]['file'], preload=True, verbose=True)
+            raw = mne.io.read_raw_edf(os.path.join(cfg['data_dir'], sleeps[key]['file']), preload=True, verbose=True)
         else:
-            raw = mne.io.read_raw_bdf(sleeps[key]['file'], preload=True, verbose=True)
+            raw = mne.io.read_raw_bdf(os.path.join(cfg['data_dir'], sleeps[key]['file']), preload=True, verbose=True)
         
         sleeps[key]['dts'] = raw.info['meas_date']
         sleeps[key]['raw'], sleeps[key]['raw_ori'], sleeps[key]['eeg'], sleeps[key]['ref'], sleeps[key]['ref_ch'], sleeps[key]['acc'], sleeps[key]['ecg'], sleeps[key]['eog'], sleeps[key]['emg'], sleeps[key]['misc'] = raw_preprocess(raw, eog_ch, emg_ch, ecg_ch, acc_ch, misc_ch, sleeps[key]['re_ref'], nf, bpf, emg_bpf, eog_bpf, sf_to, nj=nj)

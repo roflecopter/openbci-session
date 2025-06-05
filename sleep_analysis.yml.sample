@@ -7,3 +7,123 @@ default:
     file_dt_format: '%Y-%m-%d_%H-%M-%S'
     plot_dt_format: "%d %b'%y %H:%M"
 
+    n_jobs: 4
+    device: openbci
+    user: user
+    
+sleeps:
+    1:
+        file: '2025-05-30_01-18-35-max-OBCI_3D.TXT.bdf'
+        ecg_invert: False
+        re_ref: True
+        sw_ch:
+          - F7
+          - F8
+        sp_ch:
+          - F7
+          - F8
+        sp_slow_ch:
+          - F7
+          - F8
+        sp_fast_ch:
+          - O1
+          - O2
+    2:
+        file: 'yasa_example_night_young.edf'
+        ecg_invert: False
+        re_ref: False
+        sw_ch:
+          - F3-A2
+          - F4-A1
+        sp_ch:
+          - C3-A2
+          - C4-A1
+          - CZ-A2
+        sp_slow_ch:
+          - C3-A2
+          - C4-A1
+          - CZ-A2
+        sp_fast_ch:
+          - P3-A2
+          - P4-A1
+          - PZ-A2
+
+settings:
+    image_overwrite: False
+    smooth_arousal: True
+    freq_method: mne_psd_welch
+    topo_method: yasa_band_amp
+    w_fft: 4
+    m_bandwidth: 1
+    m_freq_bandwidth: 2
+    tfr_time_bandwidth: 4
+    topo_ref: AR
+    bp_relative: True
+    time_bandwidth: 24
+    window_params:
+      - 60
+      - 30
+    spect_vlim: 
+      - 6
+      - 24
+    spect_lim: 
+      - 1
+      - 16
+    freq_lim: 
+      - 1
+      - 30
+    bpf:
+      - 0.35
+      - 
+    nf:
+      - 50
+      - 1
+    eog_bpf:
+      - 0.5
+      - 8
+    emg_bpf:
+      - 10
+      - 70
+    sf_to: 256
+    plots:
+      - Hypno
+      - HRV
+      - Features
+      - Spectrum_YASA
+      - Topomap
+      - Spindles
+      - SlowWaves
+      - SpindlesFreq
+      - Radar
+    misc_ch:
+      - E1-Fpz
+      - E2-Fpz
+    acc_ch:
+      - ACC_X
+      - ACC_Y
+      - ACC_Z
+    eog_ch:
+      - EOG-RL
+      - ROC-A1
+      - LOC-A2
+    emg_ch:
+      - EMG-N
+      - EMG1-EMG2
+    ecg_ch:
+      - ECG
+      - ECG-AS
+      - ECG-AI
+      - ECG-RA-V2
+      - EKG-R-EKG-L
+    n_acc: 3 
+    plots_all:
+      - Hypno
+      - HRV
+      - Features
+      - Spectrum_YASA
+      - Spectrum 
+      - Topomap
+      - Spindles
+      - SlowWaves
+      - SpindlesFreq
+      - Radar

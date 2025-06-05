@@ -38,8 +38,17 @@ Spectrum: for each channel
 
 
 Slow Waves Amplitude and count (by channel, by stage), Spindles (by channel), PSD (by channel)
+Early/Late density, ratio and CV (coef of variation) for spindles and slow waves density. 
+Early period is 4.5H staring after SOL and Late 4.5H before final awake. E/L = Early Density / Late Density 
 
-![PSD, SWS, Spindles](sample/image/2025-02-01_00-12-06%20PSD%20user.png)
+![PSD, SWS, Spindles](sample/image/2024-03-22_23-18-13%20PSD%20user.png)
+
+Spindle density over night
+![Spindle Density](sample/image/2024-03-22_23-18-13%20SPD%20user.png)
+
+Slow Waves density over night
+![Slow Waves Density](sample/image/2024-03-22_23-18-13%20SWD%20user.png)
+
 
 HR & HRV (ECG) by sleep stages, major movements, arrythmia/artifacts detection (all abbreviations explained below)
 * Red line - HR

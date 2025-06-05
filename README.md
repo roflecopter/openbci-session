@@ -81,13 +81,18 @@ Each script comes with config file which is name as script but with yml extensio
 Script to start OpenBCI session in a single click, usually for sleep EEG acquisiton purposes. 
 * Used to start session with data saved on sd with desired sampling frequency (for greater than 250Hz modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) need to be flashed, otherwise it will always write with default 250Hz).
 * Saves session start timestamp and settings into sqlite file (session_dir/sessions.db). Session info will be used in sd_convert.py script
-* Config: setup port and session_dir
+* Config: setup port, session_dir, montages, electrode descriptions, activities list and current activity
+* Montages: here you list possible montages you want to use
+* Electrodes: here you list possible electrode types
+* Activities: here you set settings like sample frequency, gain, choose eeg montage and emg montages by key from montages section
+* Activity: set key from activities section to choose prefered activity
+* sample yml file already contains simple montage I use daily, you rename it and modify it for your purposes
 
 # sd_convert.py
 Script to convert OpenBCI SD card .TXT files to 
 * 24-bit BDF with calibrated values. Accelerometer data is upsampled to match ADS sampling rate.
 * Recording timestamp and settings taken from sqlite db which automatically created and updated by session_start.py script
-* Config: setup sd_dir (openbci sd card mountpoint, e.g. /Volumes/OBCI for mac), data_dir (for output files) and session_dir (must be equal to session_start.yml)
+* Config: setup sd_dir (openbci sd card mountpoint, e.g. /Volumes/OBCI for mac), data_dir (for output files) and session_dir (must be equal to session_start.yml) and basic user data
 
 # session_analyse.py
 Script to analyses recorded sessions. Suited for short sessions (like meditations etc).
@@ -102,8 +107,8 @@ Periods (and other settings) are defined for each session in sessions variable i
 # sleep_analyse.py
 Script to analyse recored sleep session. 
 Make sure to copy and rename sleep_analysis.yml.sample to sleep_analysis.yml and set 3 directories - bdf file directory location, cache dir location (csv will be stored here) and image dir location (plot pngs will be stored here)
-* You have to pass your BDF file created by sd_convert.py into sleeps array inside script (edit script to put filename manually)
-* Script then reads raw BDF file and filter it
+* You have to pass your BDF file created by sd_convert.py into sleeps list inside config file (edit sleeps sections in yml config - add filename, use re_ref: False and ecg_invert: False by default)
+* Script then reads raw BDF file and filters it according to filtering settings in config file (settings section), start with sample settings
 * Builds hypnograms with YASA and make plots (for each channel, max probablity and adjusted consensus)
 * Plot Multitaper Spectrogram
 * Plot Amplitude topomaps grouped by sleep stage

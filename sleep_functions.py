@@ -1026,9 +1026,10 @@ def process_bp(raw, channels, ref_channel, topo_ref, hypno_adj, stages, re_ref, 
 
     if not re_ref:
         mapping = {ch: ch.split("-")[0] for ch in channels if "-" in ch}                
-        ten_twenty_montage = mne.channels.make_standard_montage('standard_1020')
         raw_bp.rename_channels(mapping)
-        raw_bp.set_montage(ten_twenty_montage , match_case=False)
+
+    ten_twenty_montage = mne.channels.make_standard_montage('standard_1020')
+    raw_bp.set_montage(ten_twenty_montage , match_case=False)
 
     if topo_ref == 'REST':
         sphere = mne.make_sphere_model("auto", "auto", raw.info)

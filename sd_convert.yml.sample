@@ -7,3 +7,10 @@ default:
     sql_dt_format: '%Y-%m-%d %H:%M:%S'
     file_dt_format: '%Y-%m-%d %H-%M-%S'
 
+    user: User
+    gender: Male
+    birthday: 1980-01-01 12:00:00
+    brand: OpenBCI
+    save_csv: False
+    
+    

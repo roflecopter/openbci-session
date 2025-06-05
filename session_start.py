@@ -20,140 +20,87 @@ with open(cfg_file, "r") as yamlfile:
     cfg_base = yaml.load(yamlfile, Loader=yaml.FullLoader)
     cfg = cfg_base['default']
 
-# for simplicity channels must be attached sequentially, 
-# starting from the first and without gaps / skips
-# so for 3 channels setup always use board channels 1, 2, 3
-# otherwise you have to modify script for you specific needs
+# open sleep_analysis.yml and setup desired configuration: montage, electrode and activity
+# activity consists of activity settings, chosen eeg and emg montages and electrode type
 
-# here you can see different montages I've tried. You can reproduce and use one of these or add your own; 
-# you can delete unneeded montages between ### START MONTAGES and ### END MONTAGES
-# but make sure activity_choice contains at least single montage
-
-### START MONTAGES
-sleep_channels = {
-    'F8-T5':0, 'F7-T5':1, 'O2-T5':2, 'O1-T5':3, 
-    'T8-T5':4, 'T7-T5':5, 'AFz-T5':6, 'T6-T5':7}
-
-sleep_om_channels = {
-    'F8-T5':0, 'F7-T5':1, 'O2-T5':2, 'O1-T5':3, 
-    'T8-T5':4, 'T7-T5':5, 'AFz-T5':6, 'T6-T5':7}
-sleep_ext_channels = {
-    'F8-T5':0, 'F7-T5':1, 'O2-T5':2, 'O1-T5':3, 
-    'T8-T5':4, 'T7-T5':5, 'AFz-T5':6, 'T6-T5':7,
-    'Cz': 8}
-sleep_all_channels = {
-    'F8-T7':0, 'F7-T7':1, 'O2-T7':2, 'O1-T7':3, 
-    'T8-T7':4, 'AFz-T7':5}
-# emg_channels = {'EMG-N':8, 'EOG-RL':9}
-
-sleep_full_channels = {
-    'F8-T7':0, 'F7-T7':1, 'O2-T7':2, 'O1-T7':3, 
-    'T8-T7':4, 'AFz-T7':5}
-sleep_af_channels = {
-    'AF4-T7':0, 'AF3-T7':1, 'O2-T7':2, 'O1-T7':3, 
-    'T8-T7':4, 'AFz-T7':5}
-sleep_full_short_channels = {
-    'F8-T7':0, 'T8-T7':1, 'O2-T7':2, 'O1-T7':3, 
-    'F7-T7':4, 'AFz-T7':5}
-# emg_channels = {'EOG-RL':6, 'EMG-N':7}
-# emg_channels = {'EOG-RL':6}
-emg_channels = {}
-
-cyton_cap_channels = {
-    'F4-M1':0, 'F3-M1':1, 'O2-M1':2, 'O1-M1':3, 
-    'T8-M1':4, 'T7-M1':5, 'Cz-M1':6, 'M2-M1':7}
-daisy_cap_channels = {
-    'O2-M1':0, 'O1-M1':1, 'P4-M1':2, 'P3-M1':3, 
-    'C4-M1':4, 'C3-M1':5, 'Cz-M1':6, 'Fpz-M1':7,
-    'F4-M1':8, 'F3-M1':9, 'F8-M1':10, 'F7-M1':11,
-    'T8-M1':12, 'T7-M1':13, 'Fz-M1':14, 'M2-M1':15}
-daisy_ultracortex_channels = {
-    'O2-M1':0, 'O1-M1':1, 'P4-M1':2, 'P3-M1':3, 
-    'C4-M1':4, 'C3-M1':5, 'Cz-M1':6, 'M2-M1':7,
-    'F4-M1':8, 'F3-M1':9, 'F8-M1':10, 'F7-M1':11,
-    'T8-M1':12, 'T7-M1':13, 'Fz-M1':14, 'AFz-M1':15}
-
-# emg_channels = {'E2-Fpz':5, 'E1-Fpz':6}
-# emg_channels = {'EOG-RL':5, 'ECG-RA-V2':6}
-# emg_channels = {'ECG-AI':6}
-# emg_channels = {}
-
-sleep_fo_channels = {
-    'F8-AFz':0, 'F7-AFz':1, 'O2-AFz':2, 'O1-AFz':3, 
-    }
-emg_channels = {'ECG-AI':4}
-
-electrode_choice = {'1':'Gold Cup OpenBCI, Ten20', 
-                    '2': 'Premium Ag/AgCl FRI, Sigma Gel',
-                    '3':'Premium Ag/AgCl FRI', 
-                    '4':'Ag/AgCl FRI disposable, Sigma Gel', 
-                    '5':'Gold Cup Grass, Ten20',
-                    '6':'Gold Cup OpenBCI, Sigma Gel',
-                    '7': 'Ambu Neuroline Cup, Sigma Gel'}
-
-# final list of full montage settings
+# activity structure
 # type: sleep or anything else for custom processing
 # dur: for sleep use 12H, for shorter sessions 5M 15M 30M 1H 2H 4H is available
 # sf: sampling frequency, use 250 or 500 for sleep, for shorter sessions 1000 seems fine. in Hz
 # gain: 24
-# e: electrode type description, added to BDF desc. for example 'Gold Cup OpenBCI, Ten20'. Use electrode_choice array and modify if needed
-# ch: array electrode montage description, dict with 'channel name':board_slot_number, e.g. {'F7-Fpz':1, 'F8-Fpz': 2}
+# electrode: electrode type description from electrodes section, to be added into BDF description. for example 'Gold Cup OpenBCI, Ten20'.
+# channels: eeg montage from montages section which contains electrode montage description in form of channel_name: board_pin, e.g. F7-Fpz:1 etc
+# emg_channels: eog/ecg/emg montage from montages section
 # dev: daisy or cyton (device)
-# notice: emg_channels are set separately and not contained here. set them separately if you want EOG / ECG. Format is same is ch
-
-activity_choice = {
-    '0': {'type': 'sleep', 'dur': '12H', 'sf': 500, 'g': 'FT7', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': sleep_om_channels, 'dev': 'daisy'},
-    '1': {'type': 'sleep', 'dur': '12H', 'sf': 500, 'g': 'Fp2', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': sleep_fo_channels, 'dev': 'cyton'},
-    '2': {'type': 'nsdr', 'dur': '1H', 'sf': 1000, 'g': 'AFz', 'gain': 24,
-          'e': electrode_choice['4'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
-    '3': {'type': 'swaroopa isha', 'dur': '1H', 'sf': 1000, 'g': 'AFz', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
-    '4': {'type': 'meditation', 'dur': '1H', 'sf': 1000, 'g': 'AFz', 'gain': 24,
-          'e': electrode_choice['6'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
-    '5': {'type': 'rest', 'dur': '1H', 'sf': 1000, 'g': 'AFz', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
-    '6': {'type': 'rest-eyeopen', 'dur': '1H', 'sf': 1000, 'g': 'AFz', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
-    '7': {'type': 'dantian breath', 'dur': '1H', 'sf': 1000, 'g': 'AFz', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
-    '8': {'type': 'meditation', 'dur': '1H', 'sf': 1000, 'g': 'Fp2', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': sleep_channels, 'dev': 'cyton'},
-    '9': {'type': 'unknown', 'dur': '1H', 'sf': 500, 'g': 'Fp2', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': sleep_ext_channels, 'dev': 'daisy'},
-    '10': {'type': 'dantian breath', 'dur': '1H', 'sf': 1000, 'g': 'AFz', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': daisy_cap_channels, 'dev': 'daisy'},
-    '11': {'type': 'dantian breath', 'dur': '1H', 'sf': 1000, 'g': 'M2', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': daisy_ultracortex_channels, 'dev': 'daisy'},
-    '12': {'type': 'sleep', 'dur': '12H', 'sf': 500, 'g': 'Fp2', 'gain': 24,
-          'e': electrode_choice['1'], 'ch': sleep_af_channels, 'dev': 'cyton'},
-    }
-
-activity_chosen = '1' # choose the montage you want to apply, add note if needed
-# note = '2m rest before, seated'
-note = ''
-### END MONTAGES
+# note: additional information
 
 # full example of sleep EEG (F8, F7, O2, O1) with AFz as ref and FT7 as ground, with ECG (A-I lead) montage using daisy board, OpenBCI Gold cups with Ten-20 and 500Hz sampling frequency
-# activity_choice = {
-#    '0': {'type': 'sleep', 'dur': '12H', 'sf': 500, 'g': 'FT7', 'gain': 24,
-#          'e': 'Gold Cup OpenBCI, Ten20', 'ch': {'F8-AFz':0, 'F7-AFz':1, 'O2-AFz':2, 'O1-AFz':3, }, 'dev': 'daisy'},}
-# emg_channels = {'ECG-AI':4}
-# note = 'my note'
-# activity_chosen = '0'
-# here you have set montage, thats all, dont need to modify anything below
+# add to session_start.yml below default section
+# activity: 1
+# activities:
+#   1:
+#     type: sleep
+#     dur: 12H
+#     sf: 500
+#     ground: Fp2
+#     gain: 24
+#     electrode: 1
+#     ch: sleep_channels
+#     dev: cyton
+#     emg: emg_channels
+#     note: my usual sleep session
+# electrodes:
+#   1: Gold Cup OpenBCI, Ten20
+# montages:
+#   sleep_channels:
+#     F8-AFz: 0
+#     F7-AFz: 1
+#     O2-AFz: 2
+#     O1-AFz: 3    
+#   emg_channels:
+#     ECG-AI: 4
+
+# for simplicity board channels must be attached sequentially, 
+# starting from the first and without gaps / skips
+# so for 3 channels setup always use board channels 1, 2, 3
+# otherwise you have to modify script for you specific needs
+
+# format sd card on mac with terminal command:
+# find disk number in dev with 'diskutil list'
+# sudo diskutil zeroDisk /dev/disk4
+# sudo diskutil eraseDisk FAT32 OBCI MBRFormat /dev/disk4
+# sudo diskutil mountDisk /dev/disk4
+# diskutil list:
+#    /dev/disk4 (internal, physical):
+#       #:                       TYPE NAME                    SIZE       IDENTIFIER
+#       0:     FDisk_partition_scheme                        *31.9 GB    disk4
+#       1:                 DOS_FAT_32 OBCI                    31.9 GB    disk4s1
+# read 100mb of data after 50mb and confirm zeros (press q after command executed)
+# sudo dd if=/dev/disk4 bs=1m skip=50 count=100 | hexdump -C | less
+#     100+0 records in
+#     100+0 records out
+#     104857600 bytes transferred in 3.251993 secs (32244104 bytes/sec)
+#     00000000  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+#     *
+#     06400000
+
+montages = cfg_base['montages']
+electrodes = cfg_base['electrodes']
+activities = cfg_base['activities']
+activity_chosen = cfg_base['activity'] # choose the montage you want to apply in config yml, add note if needed
 
 # extract settings from chosen montage
-activity = activity_choice[activity_chosen]['type'];
-device = activity_choice[activity_chosen]['dev']
+activity = activities[activity_chosen]['type'];
+device = activities[activity_chosen]['dev']
 ch_n = 8 if device == 'cyton' else 16
-channels = activity_choice[activity_chosen]['ch'];
-electrode_type = activity_choice[activity_chosen]['e'];
-duration = activity_choice[activity_chosen]['dur'];
-ground = activity_choice[activity_chosen]['g'];
-sampling_rate = activity_choice[activity_chosen]['sf'];
-gain = activity_choice[activity_chosen]['gain'];
+channels = montages[activities[activity_chosen]['ch']];
+emg_channels = montages[activities[activity_chosen]['emg']];
+electrode_type = electrodes[activities[activity_chosen]['electrode']];
+duration = activities[activity_chosen]['dur'];
+ground = activities[activity_chosen]['ground'];
+sampling_rate = activities[activity_chosen]['sf'];
+gain = activities[activity_chosen]['gain'];
+note = activities[activity_chosen]['note'];
 
 print(f'{device}: {activity}, {electrode_type}, g{gain}, {sampling_rate}Hz, {duration}')
 print(f'{channels}, ground: {ground}, emg: {emg_channels}')
@@ -187,7 +134,6 @@ if res == 'Success: default$$$':
     print(f'mode is default')
 else:
     sys.exit(f'mode is not default')
-
 
 # BLOCK_DIV in firmware code seems to reduce real size by 2 times due to wrong block size
 # this results in half session time, so do not detach daisy until it fixed in firmware

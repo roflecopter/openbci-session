@@ -5,3 +5,49 @@ default:
     session_file: 'sessions.db'
     sql_dt_format: '%Y-%m-%d %H:%M:%S'
 
+activity: 1
+
+electrodes:
+  1: Gold Cup OpenBCI, Ten20
+  2: Premium Ag/AgCl FRI, Sigma Gel
+  3: Premium Ag/AgCl FRI
+  4: Ag/AgCl FRI disposable, Sigma Gel
+  5: Gold Cup Grass, Ten20
+  6: Gold Cup OpenBCI, Sigma Gel
+  7: Ambu Neuroline Cup, Sigma Gel
+
+montages:
+  sleep_channels:
+    F8-AFz: 0
+    F7-AFz: 1
+    O2-AFz: 2
+    O1-AFz: 3    
+
+  emg_channels:
+    ECG-AI: 4
+
+  emg_empty:
+      
+activities:
+  1:
+    type: sleep
+    dur: 12H
+    sf: 250
+    ground: Fp2
+    gain: 24
+    electrode: 1
+    ch: sleep_channels
+    dev: cyton
+    emg: emg_channels
+    note:     
+  2:
+    type: meditation
+    dur: 1H
+    sf: 250
+    ground: AFz
+    gain: 24
+    electrode: 4
+    ch: sleep_channels
+    dev: daisy
+    emg: emg_empty
+    note: 

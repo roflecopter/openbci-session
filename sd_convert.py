@@ -24,12 +24,12 @@ with open(cfg_file, "r") as yamlfile:
     cfg = cfg_base['default']
 
 # info will be embedded into output BDF
-user = 'User'
-gender = 'Male'
-birthday = '1980-01-01 12:00:00'
-brand = 'OpenBCI'
+user = cfg['user']
+gender = cfg['gender']
+birthday = cfg['birthday']
+brand = cfg['brand']
 
-save_csv = False # set to True to additionally export data to CSV (big size for long session / sleep)
+save_csv = cfg['save_csv'] # set to True to additionally export data to CSV (big size for long session / sleep)
 
 def sc_interp1d_nan(y, m = 'pchip', extrapolate = False):
   y = np.array(y)

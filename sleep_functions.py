@@ -408,6 +408,10 @@ def plot_rolling_spindle_density(sp_summary, dts, cfg, channels=['F7', 'F8'],
     ax1.set_title(f'{dts.strftime(cfg["plot_dt_format"])} Rolling {window_minutes}-Minute {type_label.capitalize()} Density Over Time\n'
                   f'Channels: {", ".join(channels)} | Stages: {stage_filter}', fontsize=14)
     ax1.grid(True, alpha=0.3)
+
+    ax1.xaxis.set_major_locator(mdates.MinuteLocator(interval=60))
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+
     
     # Raw count plot
     ax2.plot(density_df['time'], density_df['count'], 
@@ -975,6 +979,14 @@ L/H {lfhf_t['tst']}±{lfhf_t['tst_sd']} N3 {lfhf_t['n3']}±{lfhf_t['n3_sd']} R {
                     'hr': hr_t['tst'],
                     'rmssd': rmssd_t['tst'],
                     'rmssd_n3': rmssd_t['n3'],
+                    'rmssd_r': rmssd_t['r'],
+                    'lh_n3': lfhf_t['n3'],
+                    'lh_r': lfhf_t['r'],
+                    'lh': lfhf_t['tst'],
+                    'ecg_miss': round(np.sum(hrv_stages['tst'][f'missed'])/(tst_adj/60),3),
+                    'ecg_ectopic': round(np.sum(hrv_stages['tst'][f'ectopic'])/(tst_adj/60),3),
+                    'ecg_extra': round(np.sum(hrv_stages['tst'][f'extra'])/(tst_adj/60),3),
+                    'ecg_longshort': round(np.sum(hrv_stages['tst'][f'longshort'])/(tst_adj/60),3),
                     'mh': movements_per_hour
                     }
                 old_fontsize = plt.rcParams["font.size"]
@@ -1015,8 +1027,7 @@ L/H {lfhf_t['tst']}±{lfhf_t['tst_sd']} N3 {lfhf_t['n3']}±{lfhf_t['n3_sd']} R {
                 plt.subplots_adjust(left=0.01, right=0.99, top=0.9, bottom=0.01) 
                 plt.tight_layout()
                 plt.rcParams.update({"font.size": old_fontsize})
-    return fig, ecg_stat
-
+    return fig, ecg_stat, hrv_stages, major_acc_epoch
 
 def process_bp(raw, channels, ref_channel, topo_ref, hypno_adj, stages, re_ref, bp_bands, bp_relative):
     raw_bp  = raw.copy().pick(channels)
@@ -1040,52 +1051,58 @@ def process_bp(raw, channels, ref_channel, topo_ref, hypno_adj, stages, re_ref, 
         raw_bp.set_eeg_reference(ref_channels = 'average')
 
     
-    bps_s = []
-    for s in range(len(stages)):
+    bps_s = []; stages_return = {}
+    for ss, s in stages.items():
         hypno_up = yasa.hypno_upsample_to_data(hypno_adj, sf_hypno=1/30, data=raw)
-        bandpower = yasa.bandpower(raw_bp, hypno=hypno_up, include=(s), bands=bp_bands, relative=bp_relative)
-        bp_b = []
-        for b in range(len(bp_bands)):
-            bp = np.sqrt(bandpower.xs(s)[bp_bands[b][2]])
-            bp_b.append(bp)
-        bps_s.append(bp_b)
-    return raw_bp, bps_s
+        if s in hypno_up:
+            bandpower = yasa.bandpower(raw_bp, hypno=hypno_up, include=(s), bands=bp_bands, relative=bp_relative)
+            bp_b = []
+            for b in range(len(bp_bands)):
+                bp = np.sqrt(bandpower.xs(s)[bp_bands[b][2]])
+                bp_b.append(bp)
+            bps_s.append(bp_b)
+            stages_return[ss] = s
+    return raw_bp, bps_s, stages_return
 
-def topomap_plot(dts, raw_bp, bps_s, bp_relative, topo_ref, sig_specs, topo_method, hypno_adj, stages, stages_plot, bp_bands, units, cfg):
+def topomap_plot(dts, raw_bp, bps_s, bp_relative, topo_ref, sig_specs, topo_method, hypno_adj, stages, stages_plot, stages_return, bp_bands, units, cfg):
     fig, axes = plt.subplots(len(stages_plot),len(bp_bands), 
              figsize=(len(bp_bands)*2, len(stages_plot)*2))
     plot_type = f'{dts.strftime(cfg["plot_dt_format"])} Amplitude (ref={topo_ref})'; plot_params = ''
     hypno_up = yasa.hypno_upsample_to_data(hypno_adj, sf_hypno=1/30, data=raw_bp)
-    for s_index, s in enumerate(stages_plot):
-        for b in range(len(bp_bands)):
-            bp = bps_s[s][b]
-            if not bp_relative:
-                p_max = np.max(bp)
-                p_min = np.min(bp)
-            else:
-                p_max = max(np.array(bps_s).max(axis=2)[...,b])
-                p_min = min(np.array(bps_s).min(axis=2)[...,b])*1.2
-            vlim = (p_min,p_max)
-            ax = axes[s_index,b]
-            im, _ = mne.viz.plot_topomap(
-                bp, 
-                raw_bp.info,
-                cmap=cm.jet,
-                axes=ax,
-                vlim=vlim,
-                show=False)
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes("right", size="5%", pad=0.05)
-            cbar = plt.colorbar(im, cax=cax, format='%0.1f', ticks = [vlim[0], vlim[1]], aspect=10)
-            cbar.ax.set_position([0.85, 0.1, 0.05, 0.8])
-            cbar.set_label(units['rel'])
-            bl = f'{bp_bands[b][2]} ({bp_bands[b][0]} - {bp_bands[b][1]} Hz)'
-            if b == 0:
-                ax.set_title(f'{stages[s]} {bl}')
-            elif b == 1:
-                ax.set_title(f'{bl}')
-            else:
-                ax.set_title(f'{bl}')
+    for sp in range(len(stages_plot)):
+        s = stages_plot[sp]
+        s_key = next((k for k, v in stages_return.items() if v == s), None)
+        if s_key is not None:
+            si = list(stages_return.keys()).index(s_key)
+            for b in range(len(bp_bands)):
+                bp = bps_s[si][b]
+                if not bp_relative:
+                    p_max = np.max(bp)
+                    p_min = np.min(bp)
+                else:
+                    p_max = max(np.array(bps_s).max(axis=2)[...,b])
+                    p_min = min(np.array(bps_s).min(axis=2)[...,b])*1.2
+                vlim = (p_min,p_max)
+                ax = axes[sp,b]
+                im, _ = mne.viz.plot_topomap(
+                    bp, 
+                    raw_bp.info,
+                    cmap=cm.jet,
+                    axes=ax,
+                    vlim=vlim,
+                    show=False)
+                divider = make_axes_locatable(ax)
+                cax = divider.append_axes("right", size="5%", pad=0.05)
+                cbar = plt.colorbar(im, cax=cax, format='%0.1f', ticks = [vlim[0], vlim[1]], aspect=10)
+                cbar.ax.set_position([0.85, 0.1, 0.05, 0.8])
+                cbar.set_label(units['rel'])
+                bl = f'{bp_bands[b][2]} ({bp_bands[b][0]} - {bp_bands[b][1]} Hz)'
+                if b == 0:
+                    ax.set_title(f'{s_key} {bl}')
+                elif b == 1:
+                    ax.set_title(f'{bl}')
+                else:
+                    ax.set_title(f'{bl}')
     fig.suptitle(f'{plot_type} ({sig_specs}, {topo_method}=[{plot_params}]')
     plt.tight_layout()
     return fig
@@ -1274,7 +1291,7 @@ def psd_plot(dts, raw_ori, channels, ref_ch, sp, sp_ch, sp_metric, sw, sw_ch, sw
 
     plt.tight_layout(rect=[0, 0, 1, 0.99])
     plt.rcParams.update({"font.size": old_fontsize})
-    return fig
+    return fig, amps, max_amp
 
 def plot_radar(dts, sleep_stats_info, ecg_stats_info, acc, cfg, n3_goal = 90, rem_goal = 105, awk_goal = 30, hr_goal = 45, hrv_goal = 35, mh_goal = 4.3):
     n3 = sleep_stats_info['N3']

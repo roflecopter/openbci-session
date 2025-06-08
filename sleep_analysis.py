@@ -44,6 +44,7 @@ plt.rcParams.update({"font.size": 8})
 device = cfg['device']
 user = cfg['user']
 sleeps = cfg_base['sleeps']
+if False: sleeps = {1: sleeps[1]}
 settings = cfg_base['settings']
 
 # ecg_invert: flips ecg signal, in case electrodes were placed inverse by mistake
@@ -90,7 +91,7 @@ units = {'psd_dB': 'dB(µV²/Hz)', 'amp': 'µV', 'p': 'µV²', 'p_dB': 'dB(µV²
 sig_specs = f'sf={sf_to}Hz, notch={nf}, bandpass={bpf}'
 spect_specs = f'num_tapers={num_tapers}, window={window_params}'
 
-stages = ['W','N1','N2','N3','R']
+stages = {'W': 0,'N1': 1,'N2': 2,'N3': 3,'R': 4}
 stages_plot = [0,4,2,3]
 
 # list of bands for band power
@@ -222,20 +223,20 @@ if 'HRV' in plots: # Process ECG
             if len(session['ecg']) > 0:
                 raw  = session['raw'].copy().pick(session['ecg'])
                 ecg_invert = -1 if session['ecg_invert'] else 1
-                fig, session['ecg_stats'] = process_ecg(raw, session['ecg'], session['dts'], session['hypno_df'], session['acc_agg'], session['acc'], session['sleep_stats_info'], cfg, user, device, ecg_invert)
+                fig, session['ecg_stats'], hrv_stages, major_acc_epoch = process_ecg(raw, session['ecg'], session['dts'], session['hypno_df'], session['acc_agg'], session['acc'], session['sleep_stats_info'], cfg, user, device, ecg_invert)
                 png_file = f"{session['dts'].strftime(cfg['file_dt_format'])} hrv {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
                 if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
                 sessions[index] = session
 
 if load_bp:
     for index, session in enumerate(sessions):  
-        session['raw_bp'], session['bps_s'] = process_bp(session['raw'], session['eeg'], session['ref'], topo_ref, session['hypnos_adj'], stages, session['re_ref'], bp_bands, bp_relative)
+        session['raw_bp'], session['bps_s'], session['bp_stages'] = process_bp(session['raw'], session['eeg'], session['ref'], topo_ref, session['hypnos_adj'], stages, session['re_ref'], bp_bands, bp_relative)
         sessions[index] = session
 
 if 'Topomap' in plots:
     for index, session in enumerate(sessions):
         if len(session['eeg']) > 2:
-            fig = topomap_plot(session['dts'], session['raw_bp'], session['bps_s'], bp_relative, topo_ref, sig_specs, topo_method, session['hypnos_adj'], stages, stages_plot, bp_bands, units, cfg)
+            fig = topomap_plot(session['dts'], session['raw_bp'], session['bps_s'], bp_relative, topo_ref, sig_specs, topo_method, session['hypnos_adj'], stages, stages_plot, session['bp_stages'], bp_bands, units, cfg)
             png_file = f"{session['dts'].strftime(cfg['file_dt_format'])} topomap {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
             if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 
@@ -296,7 +297,7 @@ if 'SpindlesFreq':
 # Power frequency plot with mne PSD computation
 if 'Features' in plots:
     for index, session in enumerate(sessions):
-        fig = psd_plot(session['dts'], session['raw_ori'], session['eeg'], session['ref_ch'], session['sp'], session['sp_ch'], session['sp_metric'], session['sw'], session['sw_ch'], session['sw_metric'], freq_method, w_fft, freq_lim, units, sig_specs, cfg, nj)
+        fig, amp, max_amp = psd_plot(session['dts'], session['raw_ori'], session['eeg'], session['ref_ch'], session['sp'], session['sp_ch'], session['sp_metric'], session['sw'], session['sw_ch'], session['sw_metric'], freq_method, w_fft, freq_lim, units, sig_specs, cfg, nj)
         png_file = f"{session['dts'].strftime(cfg['file_dt_format'])} PSD {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
         if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 

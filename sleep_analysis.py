@@ -286,7 +286,7 @@ if 'SlowWaves' in plots:
             png_file = f"{session['dts'].strftime(cfg['file_dt_format'])} SWD {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
             if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 
-if 'SpindlesFreq':
+if 'SpindlesFreq' in plots:
     for index, session in enumerate(sessions):
         if (1 == np.sum(np.isin(session['sp_slow_ch'], session['eeg']))/len(session['sp_slow_ch'])) and (1 == np.sum(np.isin(session['sp_fast_ch'], session['eeg']))/len(session['sp_fast_ch'])):
             fig = spindles_slow_fast(session['sp'].summary(), yasa.hypno_upsample_to_data(session['hypnos_adj'], sf_hypno=1/30, data=session['raw']), session['raw'], session['eeg'], slow_ch=session['sp_slow_ch'], fast_ch=session['sp_fast_ch'])

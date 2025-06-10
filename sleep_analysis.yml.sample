@@ -47,6 +47,25 @@ sleeps:
           - P3-A2
           - P4-A1
           - PZ-A2
+    3: 
+        file: 'zmax_recording_file.edf'
+        ecg_invert: False
+        re_ref: False
+        sw_ch:
+          - F7-Fpz
+          - F8-Fpz
+        sp_ch:
+          - F7-Fpz
+          - F8-Fpz
+        sp_slow_ch:
+          - F7-Fpz
+          - F8-Fpz
+        sp_fast_ch:
+          - F7-Fpz
+          - F8-Fpz
+        rename:
+          EEG_L: F7-Fpz
+          EEG_R: F8-Fpz
 
 settings:
     image_overwrite: False
@@ -90,6 +109,7 @@ settings:
       - HRV
       - Features
       - Spectrum_YASA
+      - Spectrum 
       - Topomap
       - Spindles
       - SlowWaves
@@ -98,10 +118,26 @@ settings:
     misc_ch:
       - E1-Fpz
       - E2-Fpz
+      - OXY_IR_AC
+      - OXY_R_AC
+      - OXY_IR_DC
+      - OXY_R_DC
+      - OXY_DARK_AC
+      - OXY_DARK_DC
+      - NASAL_L
+      - NASAL_R
+      - NOISE
+      - LIGHT
+      - BATT
+      - BODY_TEMP
+      - RSSI
     acc_ch:
       - ACC_X
       - ACC_Y
       - ACC_Z
+      - dX
+      - dY
+      - dZ
     eog_ch:
       - EOG-RL
       - ROC-A1

@@ -44,7 +44,7 @@ plt.rcParams.update({"font.size": 8})
 device = cfg['device']
 user = cfg['user']
 sleeps = cfg_base['sleeps']
-if False: sleeps = {1: sleeps[1]}
+# sleeps = {1: sleeps[1]} # uncomment and choose specific sleep file, by default all files will be processed.
 settings = cfg_base['settings']
 
 # ecg_invert: flips ecg signal, in case electrodes were placed inverse by mistake
@@ -126,13 +126,18 @@ if load_data:
             raw = mne.io.read_raw_edf(os.path.join(cfg['data_dir'], sleeps[key]['file']), preload=True, verbose=True)
         else:
             raw = mne.io.read_raw_bdf(os.path.join(cfg['data_dir'], sleeps[key]['file']), preload=True, verbose=True)
-        
+
+        if 'rename' in sleeps[key].keys():
+            if len(sleeps[key]['rename']) > 0:
+                raw.rename_channels(sleeps[key]['rename'])
+                print(raw.info['ch_names'])
+
         sleeps[key]['dts'] = raw.info['meas_date']
         sleeps[key]['raw'], sleeps[key]['raw_ori'], sleeps[key]['eeg'], sleeps[key]['ref'], sleeps[key]['ref_ch'], sleeps[key]['acc'], sleeps[key]['ecg'], sleeps[key]['eog'], sleeps[key]['emg'], sleeps[key]['misc'] = raw_preprocess(raw, eog_ch, emg_ch, ecg_ch, acc_ch, misc_ch, sleeps[key]['re_ref'], nf, bpf, emg_bpf, eog_bpf, sf_to, nj=nj)
 
         if 'Spectrum_YASA' in plots:
             for spect_ch in raw.ch_names:
-                if not (sleeps[key]['re_ref'] and sleeps[key]['ref'] == spect_ch):
+                if not (sleeps[key]['re_ref'] and sleeps[key]['ref'] == spect_ch) and (spect_ch not in sleeps[key]['misc']+sleeps[key]['acc']):
                     sig = raw.get_data(spect_ch)
                     png_file = f"{raw.info['meas_date'].strftime(cfg['file_dt_format'])} yasa spect {spect_ch}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)
                     fig = yasa.plot_spectrogram(sig[0], raw.info['sfreq'], None, trimperc=2.5)

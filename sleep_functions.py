@@ -53,14 +53,26 @@ def sleep_stats(hypno, hypno_sf = 1/30):
             if awakes_n < awake_window_mins*(60/epoch_time)*min_awake_rate: 
                 stop = True
                 sol = sol + 30 * (last_awake - h)
-    tst = 0; waso = 0
-    for h in range(0, len(hypno)):
-        if (h > (sol / epoch_time)):
-            if (hypno[h] != 'W'):
-                tst = tst + epoch_time
+    last_sleep_idx = None
+    for h in range(len(hypno) - 1, -1, -1):  # Search backwards
+        if hypno[h] != 'W':
+            last_sleep_idx = h
+            break
+    
+    if last_sleep_idx is None:
+        # No sleep detected
+        tst = 0
+        waso = 0
+    else:
+        tst = 0
+        waso = 0
+        sol_idx = int(sol / epoch_time)
+        
+        for h in range(sol_idx + 1, last_sleep_idx + 1):  # Only count up to last sleep
+            if hypno[h] != 'W':
+                tst += epoch_time
             else:
-                waso = waso + epoch_time
-            
+                waso += epoch_time            
     hyp_stats = yasa.sleep_statistics(yasa.hypno_str_to_int(hypno), 1/30)
     hyp_stats['SOL_ADJ'] = sol / 60
     hyp_stats['TST_ADJ'] = tst / 60
@@ -1028,6 +1040,74 @@ L/H {lfhf_t['tst']}±{lfhf_t['tst_sd']} N3 {lfhf_t['n3']}±{lfhf_t['n3_sd']} R {
                 plt.tight_layout()
                 plt.rcParams.update({"font.size": old_fontsize})
     return fig, ecg_stat, hrv_stages, major_acc_epoch
+
+def process_hrvst(raw, channel, hrvst_pre, hrvst_post, hrvst_period, hrvst_peroid_last, dts, cfg, user, device, ecg_invert=False):
+    raw_hrv = raw.copy().pick(channel)
+    hrvst_duration = hrvst_pre*2 + hrvst_post + hrvst_period
+    crop_secs = int(raw.n_times/raw.info['sfreq']-hrvst_duration)
+    dts = dts + timedelta(seconds=crop_secs)
+    raw_hrv.crop(tmin = crop_secs)
+    windows = [60]; slides = [1]; metrics = ['time','freq','ans','r_rr', 'nl']
+    for iw, win in enumerate(windows):
+        print(f'{iw} {win}')
+        window = windows[iw]; slide = slides[iw]
+        hrv_col = f'_{window}s'
+        hrv_cache_tag = f'hrv_p{window}_s{slide}'; 
+        hrv_file = f"{hrv_cache_tag}-{user}-{dts.strftime('%Y_%m_%d-%H_%M_%S')}.csv"
+        hrv_filepath = os.path.join(cfg['cache_dir'], hrv_file)
+        print(f'load: {hrv_filepath}')
+        if not os.path.isfile(hrv_filepath):
+            from qskit import hrv_process
+            hrv = hrv_process(raw_hrv.get_data(channel, units='uV')[0]*ecg_invert, sf = round(raw.info['sfreq']), 
+                window = window, slide = slide, user = user, device = device, 
+                dts = dts, metrics = metrics, cache_dir = cfg['cache_dir'])
+        else:
+            hrv = pd.read_csv(hrv_filepath)
+        hrv['dt'] = pd.to_datetime(hrv['dt'])
+        hrvst_start = hrvst_pre*2 + hrvst_period - hrvst_peroid_last                    
+        hrvst_end = hrvst_start + hrvst_peroid_last
+        hrvst_values = hrv[
+            (hrv['dt'] >= (dts + timedelta(seconds=hrvst_start))) &
+            (hrv['dt'] <= (dts + timedelta(seconds=hrvst_end)))
+            ]
+        st_hr = np.median(hrvst_values[f'hr{hrv_col}'])
+        st_hrv = np.median(hrvst_values[f'rmssd{hrv_col}'])
+        title = f"""{dts.strftime(cfg['plot_dt_format'])}\nHR {round(st_hr,1)} RMSSD {round(st_hrv,1)}"""
+
+        old_fontsize = plt.rcParams["font.size"]
+        plt.rcParams.update({"font.size": 15})
+        fig, ax = plt.subplots(1,1, figsize=(9,7))
+        plt.title(title)
+        p_size = 20
+        plt.plot(hrv['dt'], hrv[f'rmssd{hrv_col}'], c='green', linewidth=2)
+        plt.vlines(hrv['dt'],0, 100*hrv[f'artifacts_rate'], color='red')
+        plt.scatter(hrvst_values['dt'], hrvst_values[f'rmssd{hrv_col}'], c='b', s=p_size)
+        
+        plt.axvline(x=dts+timedelta(seconds=hrvst_pre*2), color='blue', linestyle='--', linewidth=2)
+        plt.axvline(x=dts+timedelta(seconds=hrvst_pre*2+hrvst_period), color='blue', linestyle='--', linewidth=2)
+        
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
+        import matplotlib.dates as mdates
+        
+        hrv_lim = [3, 45]; ax.set_ylim(hrv_lim[0],hrv_lim[1])
+        ax2 = ax.twinx()
+        ax2.plot(hrv['dt'], hrv[f'hr{hrv_col}'], c='red', linewidth=1.5)
+        ax2.tick_params(axis='y', labelsize=13)
+        ax2.axhline(50, c='red', linestyle='--', linewidth=.5)
+        hr_lim = [60, 120]; ax2.set_ylim(hr_lim[0],hr_lim[1])
+        ax.xaxis.set_major_locator(mdates.SecondLocator(interval=15))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+        ax.set_yticks(np.arange(0, hrv_lim[1]+10, 10))
+        ax2.set_yticks(np.arange(hr_lim[0], max([hr_lim[1], 5*round(max(hrv[f'hr{hrv_col}'])/5+0.5)])+5, 5))
+        ax.tick_params(axis='x', labelsize=13, rotation=45)  # Set the x-axis ticks font size to 12
+        ax.tick_params(axis='y', labelsize=13)  # Set the y-axis ticks font size to 12
+        ax.spines['top'].set_visible(False)
+        ax2.spines['top'].set_visible(False)
+        # ax.tick_params(axis='x')
+        plt.subplots_adjust(left=0.01, right=0.99, top=0.9, bottom=0.01) 
+        plt.tight_layout()
+        plt.rcParams.update({"font.size": old_fontsize})
+        return fig, dts, st_hr, st_hrv
 
 def process_bp(raw, channels, ref_channel, topo_ref, hypno_adj, stages, re_ref, bp_bands, bp_relative):
     raw_bp  = raw.copy().pick(channels)

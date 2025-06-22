@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import mysql.connector
 import mne
-from datetime import datetime, timedelta
 import yasa
 import os
 import shutil
@@ -12,7 +11,9 @@ import matplotlib.dates as mdates
 import threading
 import logging
 
-from datetime import datetime, timedelta
+from scipy.stats import mode
+from scipy.ndimage import label, binary_dilation, binary_erosion
+from datetime import datetime, timedelta, time as dtime, timezone
 from qskit import butter_lowpass_filter, hrv_process, hrv_quality, sc_interp 
 from matplotlib import cm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -80,7 +81,7 @@ def sleep_stats(hypno, hypno_sf = 1/30):
     hyp_stats['WASO_ADJ'] = waso / 60
     return hyp_stats
 
-def plot_hypnogram(hyp, lw=1, hl_lw=3, font_size=10, highlight={'*': 'lightgrey', 'WAKE': 'orange', 'N1': None, 'N2': 'lightskyblue', 'N3': 'indigo', 'REM': 'red'}, fill_color=None, ax=None):
+def plot_hypnogram(hyp, lw=1, hl_lw=3, font_size=10, highlight={'*': 'lightgrey', 'WAKE': 'orange', 'N1': None, 'N2': 'lightskyblue', 'N3': 'indigo', 'REM': 'red'}, fill_color=None, ax=None, cycles=None, sf_hypno=1/30, vline_dt=None):
     """
     Plot a hypnogram.
 
@@ -133,8 +134,8 @@ def plot_hypnogram(hyp, lw=1, hl_lw=3, font_size=10, highlight={'*': 'lightgrey'
         >>> hyp_b.plot_hypnogram(lw=1, fill_color="whitesmoke", highlight=None, ax=axes[1])
     """
     
-    # hyp = yasa.Hypnogram(yasa.hypno_int_to_str(hypnos_max[index]), start=pd.to_datetime(dts[index]))
-    # lw=1; hl_lw=3; font_size=10; highlight={'*': 'lightgrey', 'WAKE': 'orange', 'N1': None, 'N2': 'lightskyblue', 'N3': 'indigo', 'REM': 'red'}; fill_color=None; ax=None
+    # hyp = yasa.Hypnogram(yasa.hypno_int_to_str(session['hypnos_adj']), start=pd.to_datetime(session['dts'])); cycles = None
+    # lw=1; hl_lw=3; font_size=10; vline=None; highlight={'*': 'lightgrey', 'WAKE': 'orange', 'N1': None, 'N2': 'lightskyblue', 'N3': 'indigo', 'REM': 'red'}; fill_color=None; ax=None
 
     assert isinstance(hyp, yasa.Hypnogram), "`hypno` must be YASA Hypnogram."
 
@@ -195,7 +196,25 @@ def plot_hypnogram(hyp, lw=1, hl_lw=3, font_size=10, highlight={'*': 'lightgrey'
         stage_highlight = np.ma.masked_not_equal(yvalues, hyp.mapping.get(stage))
         if not stage_highlight.mask.all():
             ax.hlines(stage_highlight, xmin=bins[:-1], xmax=bins[1:], color=highlight[stage], lw=hl_lw)
-
+            
+    sf_hypno = 1/30
+    if (cycles is not None) and len(cycles) > 0:
+        colors = plt.cm.tab10(np.linspace(0, 1, len(cycles)))
+        for i, cycle in enumerate(cycles):
+            start_time = mdates.date2num(pd.Timestamp(hyp.start) + timedelta(seconds=cycle['start'] / sf_hypno))
+            end_time = mdates.date2num(pd.Timestamp(hyp.start) + timedelta(seconds=cycle['end'] / sf_hypno))
+            ax.axvspan(start_time, end_time, alpha=0.2, color=colors[i], 
+                        label=f'Cycle {cycle["cycle"]}')
+            
+            # Mark REM period if present
+            if cycle['rem_start'] is not None:
+                rem_start_time = mdates.date2num(pd.Timestamp(hyp.start) + timedelta(seconds=cycle['rem_start'] / sf_hypno))
+                rem_end_time = mdates.date2num(pd.Timestamp(hyp.start) + timedelta(seconds=cycle['rem_end'] / sf_hypno))
+                ax.axvspan(rem_start_time, rem_end_time, alpha=0.1, 
+                            color='red', ymin=0.65, ymax=0.75)
+        
+    if vline_dt is not None:
+        ax.axvline(mdates.date2num(vline_dt), c='black', linestyle='--', linewidth=1)
     # Aesthetics
     ax.use_sticky_edges = False
     ax.margins(x=0, y=1 / len(stage_order) / 2)  # 1/n_epochs/2 gives half-unit margins
@@ -214,14 +233,9 @@ def plot_hypnogram(hyp, lw=1, hl_lw=3, font_size=10, highlight={'*': 'lightgrey'
     return ax
 
 def plot_average(
-    self,
+    df_sync,
     event_type,
-    center="Peak",
     hue="Channel",
-    time_before=1,
-    time_after=1,
-    filt=(None, None),
-    mask=None,
     figsize=(6, 4.5),
     ax=None,
     **kwargs,
@@ -230,19 +244,10 @@ def plot_average(
     import seaborn as sns
     import matplotlib.pyplot as plt
 
-    df_sync = self.get_sync_events(
-        center=center, time_before=time_before, time_after=time_after, filt=filt, mask=mask
-    )
     assert not df_sync.empty, "Could not calculate event-locked data."
     assert hue in ["Stage", "Channel"], "hue must be 'Channel' or 'Stage'"
     assert hue in df_sync.columns, "%s is not present in data." % hue
 
-    # if event_type == "spindles":
-    #     title = "Average spindle"
-    # else:  # "sw":
-    #     title = "Average SW"
-
-    # Start figure
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=figsize)
     sns.lineplot(data=df_sync, x="Time", y="Amplitude", hue=hue, ax=ax, **kwargs)
@@ -346,7 +351,7 @@ def sws_metrics(sw, sol, hypno, sw_ch = ['F7','F8'], stages=[2,3], period = 4.5*
     return sws_amp_cv, first_density, last_density
 
 
-def plot_rolling_spindle_density(sp_summary, dts, cfg, channels=['F7', 'F8'], 
+def plot_rolling_spindle_density(sp_summary, sleep_stats_infos, dts, cfg, channels=['F7', 'F8'], 
                                 window_minutes=10, stage_filter=[2], type_label ='spindle', verbose=False):
     """
     Create a rolling spindle/sws density plot over time
@@ -407,6 +412,12 @@ def plot_rolling_spindle_density(sp_summary, dts, cfg, channels=['F7', 'F8'],
         })
     
     density_df = pd.DataFrame(density_data)
+    max_density = density_df.loc[density_df['density'].idxmax()]
+    
+    dts_sol = dts + timedelta(minutes=sleep_stats_infos['SOL_ADJ'])
+    dte = (dts_sol + timedelta(minutes=sleep_stats_infos['SPT']))
+    mid = dts_sol + timedelta(seconds=(dte - dts_sol).total_seconds()/2)
+    phase_diff = abs((mid - max_density["time"]).total_seconds()/60)
     
     # Create the plot
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
@@ -418,12 +429,13 @@ def plot_rolling_spindle_density(sp_summary, dts, cfg, channels=['F7', 'F8'],
                      alpha=0.3, color='lightblue')
     ax1.set_ylabel(f'{type_label.capitalize()} Density\n({type_label}s/min/channel)', fontsize=12)
     ax1.set_title(f'{dts.strftime(cfg["plot_dt_format"])} Rolling {window_minutes}-Minute {type_label.capitalize()} Density Over Time\n'
-                  f'Channels: {", ".join(channels)} | Stages: {stage_filter}', fontsize=14)
+                  f'{type_label} Phase Offset: {m2h(phase_diff)} | Peak {round(max_density["density"],2)} at {max_density["time"].strftime("%H:%M")} | Channels: {", ".join(channels)} | Stages: {stage_filter}', fontsize=14)
     ax1.grid(True, alpha=0.3)
+    ax1.axvline(mid,color="blue", linestyle="--", linewidth=1)
+    ax1.axvline(max_density["time"],color="green", linestyle="--", linewidth=1)
 
     ax1.xaxis.set_major_locator(mdates.MinuteLocator(interval=60))
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-
     
     # Raw count plot
     ax2.plot(density_df['time'], density_df['count'], 
@@ -431,6 +443,9 @@ def plot_rolling_spindle_density(sp_summary, dts, cfg, channels=['F7', 'F8'],
     ax2.set_ylabel(f'Raw {type_label} Count\n(per 10min window)', fontsize=12)
     ax2.set_xlabel('Time', fontsize=12)
     ax2.grid(True, alpha=0.3)
+    
+    ax2.axvline(mid,color="blue", linestyle="--", linewidth=1)
+    ax2.axvline(max_density["time"],color="green", linestyle="--", linewidth=1)
     
     # Format x-axis
     ax2.tick_params(axis='x', rotation=45)
@@ -452,8 +467,9 @@ def plot_rolling_spindle_density(sp_summary, dts, cfg, channels=['F7', 'F8'],
         print(f"Min density: {density_df['density'].min():.2f} {type_label}s/min/channel")
         print(f"Total {type_label}: {filtered_spindles.shape[0]}")
         print(f"Recording duration: {(end_time - start_time).total_seconds()/3600:.1f} hours")
+
     
-    return fig
+    return fig, density_df, max_density, mid, phase_diff
 
 def spindles_slow_fast(sp_sum, hypno, raw, eeg_ch_names, slow_ch=['F7','F8'], fast_ch=['O1','O2'], methods = [1,2]):
     # https://github.com/raphaelvallat/yasa/blob/master/notebooks/04_spindles_slow_fast.ipynb
@@ -673,7 +689,7 @@ def raw_preprocess(raw, eog_ch, emg_ch, ecg_ch, acc_ch, misc_ch,
 
     # finally, build eeg channels list
     eeg_ch = [c for c in ch if c not in non_eeg_ch]
-            
+
     # apply notch and bandpass filters
     if nf is not None:
         raw.notch_filter(freqs=nf[0], notch_widths=nf[1], picks = eeg_ch, n_jobs=nj)
@@ -694,7 +710,7 @@ def raw_preprocess(raw, eog_ch, emg_ch, ecg_ch, acc_ch, misc_ch,
     # resample if needed
     if sf_to != raw.info['sfreq']:
         raw.resample(sfreq=sf_to)
-        
+  
     raw_c = raw.copy()
     if re_ref:
         # split channels each side into separate array
@@ -744,7 +760,6 @@ def raw_preprocess(raw, eog_ch, emg_ch, ecg_ch, acc_ch, misc_ch,
     # apply montage
     ten_twenty_montage = mne.channels.make_standard_montage('standard_1020')
     raw_c.set_montage(ten_twenty_montage , match_case=False, on_missing="ignore")
-
 
     if not re_ref:
         ch_eeg_refs = {}
@@ -1332,9 +1347,7 @@ def plot_multitaper_spect_ch(raw, dts, channels, ref_ch, spects_c, stimes_c, sfr
         figs.append(fig)
     return figs
 
-def psd_plot(dts, raw_ori, channels, ref_ch, sp, sp_ch, sp_metric, sw, sw_ch, sw_metric, freq_method, w_fft, freq_lim, units, sig_specs, cfg, nj):
-    fig, ax = plt.subplots(2, 2, figsize=(16, 12))
-    ax = ax.flatten()
+def psds(raw_ori, freq_method, channels, w_fft, freq_lim, nj):
     raw  = raw_ori.copy().pick(channels)
     if freq_method == 'mne_psd_welch':
         n_fft = int(w_fft * raw.info['sfreq'])
@@ -1343,8 +1356,13 @@ def psd_plot(dts, raw_ori, channels, ref_ch, sp, sp_ch, sp_metric, sw, sw_ch, sw
             fmin=freq_lim[0], fmax=freq_lim[1],
             n_fft= n_fft, output = 'power', n_jobs = nj)
         psds = 10 * np.log10(psds) # convert to dB
-        plot_unit = units['psd_dB']; plot_type = 'PSD'
-        plot_params = f'fft_window={w_fft}s'
+    return psds, freqs
+
+def psd_plot(psds, freqs, dts, raw_ori, channels, ref_ch, sp_sync, sp_summary, sp_ch, sp_metric, sw_sync, sw_summary_ch, sw_summary_chst, sw_ch, sw_metric, freq_method, w_fft, freq_lim, units, sig_specs, cfg, nj, plot_avg = True):
+    fig, ax = plt.subplots(2, 2, figsize=(16, 12))
+    ax = ax.flatten()
+    plot_unit = units['psd_dB']; plot_type = 'PSD'
+    plot_params = f'fft_window={w_fft}s'
     for c in range(len(channels)):
         ax[3].plot(freqs, psds[c], label=f'{channels[c]}-{ref_ch[channels[c]]}', linewidth=1)
     ax[3].legend()
@@ -1353,21 +1371,25 @@ def psd_plot(dts, raw_ori, channels, ref_ch, sp, sp_ch, sp_metric, sw, sw_ch, sw
     plt.rcParams.update({"font.size": 20})
     fig.suptitle(f'{dts.strftime(cfg["plot_dt_format"])} {plot_type} ({sig_specs}, [{plot_params}]')
     
-    plot_average(sp, "spindles", ax=ax[2], legend=False)
-    if sp_metric is not None:
-        ax[2].set_title(f'Density: {round(sp_metric[0],2)} CV: {round(sp_metric[3],2)} {sp_ch}\n Early {round(sp_metric[1],2)} Late {round(sp_metric[2],2)} E/L {round(sp_metric[1]/sp_metric[2],2)}')        
+    if plot_avg:
+        plot_average(sp_sync, "spindles", ax=ax[2], legend=False)
+        if sp_metric is not None:
+            ax[2].set_title(f'Density: {round(sp_metric[0],2)} CV: {round(sp_metric[3],2)} {sp_ch}\n Early {round(sp_metric[1],2)} Late {round(sp_metric[2],2)} E/L {round(sp_metric[1]/sp_metric[2],2)}')        
 
-    axe = plot_average(sw, 'sw', center='PosPeak', ax=ax[0], legend=False);
-    amps = round(sw.summary(grp_chan=True)[['Count','PTP']]).reset_index()
+    amps = round(sw_summary_ch[['Count','PTP']]).reset_index()
     max_amp = amps['Count'].argmax()
-    axe.set_title(f'SW Amp: {amps["Count"][max_amp]}*{round(amps["PTP"][max_amp])}{units["amp"]} for {amps["Channel"][max_amp]}-{ref_ch[amps["Channel"][max_amp]]}')
+    
+    if plot_avg:
+        axe = plot_average(sw_sync, 'sw', ax=ax[0], legend=False);
+        axe.set_title(f'SW Amp: {amps["Count"][max_amp]}*{round(amps["PTP"][max_amp])}{units["amp"]} for {amps["Channel"][max_amp]}-{ref_ch[amps["Channel"][max_amp]]}')
 
-    axe = plot_average(sw, 'sw', center='PosPeak', hue="Stage", ax=ax[1], legend=True)
-    amps = round(sw.summary(grp_stage=True, grp_chan=True)[['Count','PTP']]).reset_index()
+    amps = round(sw_summary_chst[['Count','PTP']]).reset_index()
     max_amp = amps['Count'].argmax()
-    axe.set_title(f'SW Amp: {amps["Count"][max_amp]}*{round(amps["PTP"][max_amp])}{units["amp"]} for {amps["Channel"][max_amp]}-{ref_ch[amps["Channel"][max_amp]]} in N{amps["Stage"][max_amp]}')
-    if sw_metric is not None:
-        axe.set_title(f'SW Amp: {amps["Count"][max_amp]}*{round(amps["PTP"][max_amp])}{units["amp"]} for {amps["Channel"][max_amp]}-{ref_ch[amps["Channel"][max_amp]]} in N{amps["Stage"][max_amp]}\nCV: {round(sw_metric[0],2)} Early {round(sw_metric[1],2)} Late {round(sw_metric[2],2)}, E/L {round(sw_metric[1]/sw_metric[2],2)} {sw_ch}')
+    if plot_avg:
+        axe = plot_average(sw_sync, 'sw', hue="Stage", ax=ax[1], legend=True)
+        axe.set_title(f'SW Amp: {amps["Count"][max_amp]}*{round(amps["PTP"][max_amp])}{units["amp"]} for {amps["Channel"][max_amp]}-{ref_ch[amps["Channel"][max_amp]]} in N{amps["Stage"][max_amp]}')
+        if sw_metric is not None:
+            axe.set_title(f'SW Amp: {amps["Count"][max_amp]}*{round(amps["PTP"][max_amp])}{units["amp"]} for {amps["Channel"][max_amp]}-{ref_ch[amps["Channel"][max_amp]]} in N{amps["Stage"][max_amp]}\nCV: {round(sw_metric[0],2)} Early {round(sw_metric[1],2)} Late {round(sw_metric[2],2)}, E/L {round(sw_metric[1]/sw_metric[2],2)} {sw_ch}')
 
     plt.tight_layout(rect=[0, 0, 1, 0.99])
     plt.rcParams.update({"font.size": old_fontsize})
@@ -1443,3 +1465,888 @@ def plot_radar(dts, sleep_stats_info, ecg_stats_info, acc, cfg, n3_goal = 90, re
     plt.tight_layout()
     plt.rcParams.update({"font.size": old_fontsize})
     return fig
+
+# def fill_cycle_gaps(cycles, cycle_hypno, hypno_smooth, gap_assignment='previous'):
+#     """
+#     Fill gaps between cycles with appropriate cycle assignments.
+    
+#     Parameters
+#     ----------
+#     cycles : list
+#         List of cycle dictionaries
+#     cycle_hypno : array
+#         Current cycle assignments
+#     hypno_smooth : array
+#         Smoothed hypnogram
+#     gap_assignment : str
+#         How to assign gaps: 'previous', 'next', 'split', 'closest_rem'
+    
+#     Returns
+#     -------
+#     cycles : list
+#         Updated cycle list
+#     cycle_hypno : array
+#         Updated cycle assignments
+#     """
+#     if len(cycles) <= 1:
+#         return cycles, cycle_hypno
+    
+#     for i in range(len(cycles) - 1):
+#         current_cycle = cycles[i]
+#         next_cycle = cycles[i + 1]
+        
+#         gap_start = current_cycle['end'] + 1
+#         gap_end = next_cycle['start'] - 1
+        
+#         if gap_start <= gap_end:
+#             gap_stages = hypno_smooth[gap_start:gap_end + 1]
+            
+#             # Only process if there's sleep in the gap
+#             if np.any(gap_stages > 0):
+#                 if gap_assignment == 'previous':
+#                     # Assign all to previous cycle
+#                     cycle_hypno[gap_start:gap_end + 1] = current_cycle['cycle']
+#                     current_cycle['end'] = gap_end
+                    
+#                 elif gap_assignment == 'next':
+#                     # Assign all to next cycle
+#                     cycle_hypno[gap_start:gap_end + 1] = next_cycle['cycle']
+#                     next_cycle['start'] = gap_start
+                    
+#                 elif gap_assignment == 'split':
+#                     # Split the gap in the middle
+#                     mid_point = (gap_start + gap_end) // 2
+#                     cycle_hypno[gap_start:mid_point + 1] = current_cycle['cycle']
+#                     cycle_hypno[mid_point + 1:gap_end + 1] = next_cycle['cycle']
+#                     current_cycle['end'] = mid_point
+#                     next_cycle['start'] = mid_point + 1
+                    
+#                 elif gap_assignment == 'closest_rem':
+#                     # Assign based on proximity to REM periods
+#                     if current_cycle['rem_end'] is not None and next_cycle['rem_start'] is not None:
+#                         # Find the point closest to equidistant from both REM periods
+#                         for idx in range(gap_start, gap_end + 1):
+#                             dist_to_prev_rem = idx - current_cycle['rem_end']
+#                             dist_to_next_rem = next_cycle['rem_start'] - idx
+                            
+#                             if dist_to_prev_rem <= dist_to_next_rem:
+#                                 cycle_hypno[idx] = current_cycle['cycle']
+#                             else:
+#                                 cycle_hypno[idx] = next_cycle['cycle']
+                        
+#                         # Update cycle boundaries
+#                         current_end = np.where(cycle_hypno[gap_start:gap_end + 1] == current_cycle['cycle'])[0]
+#                         if len(current_end) > 0:
+#                             current_cycle['end'] = gap_start + current_end[-1]
+                        
+#                         next_start = np.where(cycle_hypno[gap_start:gap_end + 1] == next_cycle['cycle'])[0]
+#                         if len(next_start) > 0:
+#                             next_cycle['start'] = gap_start + next_start[0]
+#                     else:
+#                         # Fallback to previous assignment
+#                         cycle_hypno[gap_start:gap_end + 1] = current_cycle['cycle']
+#                         current_cycle['end'] = gap_end
+    
+#     # Handle gap after last cycle
+#     last_cycle = cycles[-1]
+#     final_sleep = np.where(hypno_smooth[last_cycle['end'] + 1:] > 0)[0]
+#     if len(final_sleep) > 0:
+#         final_sleep_start = last_cycle['end'] + 1 + final_sleep[0]
+#         final_sleep_end = last_cycle['end'] + 1 + final_sleep[-1]
+#         cycle_hypno[final_sleep_start:final_sleep_end + 1] = last_cycle['cycle']
+#         last_cycle['end'] = final_sleep_end
+    
+#     return cycles, cycle_hypno
+
+
+# # Update the main function to use gap filling
+# def detect_sleep_cycles(hypno, sf_hypno=1/30, min_nrem_duration=15, min_rem_duration=1, 
+#                        awakening_threshold=5, merge_close_rem=10, first_rem_window=120,
+#                        min_cycle_duration=60, last_cycle_merge_threshold=45,
+#                        fill_gaps=True, gap_assignment='previous'):
+#     """
+#     Detect sleep cycles from a hypnogram using published criteria.
+    
+#     Based on Feinberg & Floyd (1979) and updated by Jenni & Carskadon (2004),
+#     with modifications for micro-awakening handling and end-of-night short cycles.
+    
+#     Parameters
+#     ----------
+#     hypno : array
+#         Sleep stage array (0=Wake, 1=N1, 2=N2, 3=N3, 4=REM)
+#     sf_hypno : float
+#         Sampling frequency of hypnogram (default 1/30 Hz for 30s epochs)
+#     min_nrem_duration : int
+#         Minimum NREM duration in minutes to start a cycle (default 15)
+#     min_rem_duration : float
+#         Minimum REM duration in minutes to be counted (default 1)
+#     awakening_threshold : int
+#         Maximum awakening duration in minutes to not break cycle (default 5)
+#     merge_close_rem : int
+#         Merge REM periods separated by less than this many minutes (default 10)
+#     first_rem_window : int
+#         Window in minutes to look for first REM period (default 120)
+#     min_cycle_duration : int
+#         Minimum cycle duration in minutes (default 60)
+#     last_cycle_merge_threshold : int
+#         Merge last cycle if shorter than this many minutes (default 45)
+#     fill_gaps : bool
+#         Whether to fill gaps between cycles (default True)
+#     gap_assignment : str
+#         How to assign gaps: 'previous', 'next', 'split', 'closest_rem' (default 'previous')
+    
+#     Returns
+#     -------
+#     cycles : list of dicts
+#         Each dict contains 'start', 'end', 'nrem_start', 'rem_start', 'rem_end'
+#     cycle_hypno : array
+#         Same length as hypno, with cycle number (0 = no cycle)
+#     """
+    
+#     # Convert parameters from minutes to epochs
+#     epochs_per_min = int(60 * sf_hypno)
+#     min_nrem_epochs = min_nrem_duration * epochs_per_min
+#     min_rem_epochs = int(min_rem_duration * epochs_per_min)
+#     wake_threshold_epochs = awakening_threshold * epochs_per_min
+#     merge_rem_epochs = merge_close_rem * epochs_per_min
+#     first_rem_epochs = first_rem_window * epochs_per_min
+#     min_cycle_epochs = min_cycle_duration * epochs_per_min
+#     merge_threshold_epochs = last_cycle_merge_threshold * epochs_per_min
+    
+#     # Step 1: Handle micro-awakenings by filling short wake periods
+#     hypno_smooth = hypno.copy()
+#     wake_mask = hypno == 0
+    
+#     # Label continuous wake periods
+#     wake_labeled, n_wake_periods = label(wake_mask)
+    
+#     # Fill short wake periods (less than threshold)
+#     for i in range(1, n_wake_periods + 1):
+#         wake_period = wake_labeled == i
+#         period_length = np.sum(wake_period)
+        
+#         if period_length < wake_threshold_epochs:
+#             # Find what sleep stage surrounds this wake period
+#             indices = np.where(wake_period)[0]
+#             start_idx = indices[0]
+#             end_idx = indices[-1]
+            
+#             # Look at stages before and after
+#             before_stage = hypno_smooth[start_idx - 1] if start_idx > 0 else 0
+#             after_stage = hypno_smooth[end_idx + 1] if end_idx < len(hypno_smooth) - 1 else 0
+            
+#             # Fill with most common surrounding stage (excluding wake)
+#             if before_stage > 0 and after_stage > 0:
+#                 fill_stage = before_stage if before_stage == after_stage else min(before_stage, after_stage)
+#                 hypno_smooth[wake_period] = fill_stage
+    
+#     # Step 2: Merge close REM periods
+#     rem_mask = hypno_smooth == 4
+#     rem_labeled, n_rem_periods = label(rem_mask)
+    
+#     # Check each pair of consecutive REM periods
+#     for i in range(1, n_rem_periods):
+#         rem1_end = np.where(rem_labeled == i)[0][-1]
+#         rem2_start = np.where(rem_labeled == i + 1)[0][0]
+        
+#         # If gap is small and contains NREM (not wake), merge
+#         gap = rem2_start - rem1_end
+#         if gap < merge_rem_epochs:
+#             gap_stages = hypno_smooth[rem1_end + 1:rem2_start]
+#             if np.all(gap_stages > 0):  # All NREM, no wake
+#                 hypno_smooth[rem1_end + 1:rem2_start] = 4
+    
+#     # Step 3: Identify sleep cycles
+#     cycles = []
+#     cycle_hypno = np.zeros_like(hypno)
+    
+#     # Find sleep onset (first N2 or N3)
+#     sleep_onset = np.where((hypno_smooth == 2) | (hypno_smooth == 3))[0]
+#     if len(sleep_onset) == 0:
+#         return cycles, cycle_hypno
+    
+#     sleep_onset = sleep_onset[0]
+#     current_pos = sleep_onset
+#     cycle_num = 1
+    
+#     while current_pos < len(hypno_smooth):
+#         # Find start of NREM period (N2 or N3)
+#         nrem_start = None
+#         for i in range(current_pos, len(hypno_smooth)):
+#             if hypno_smooth[i] in [2, 3]:
+#                 nrem_start = i
+#                 break
+        
+#         if nrem_start is None:
+#             break
+        
+#         # Find continuous NREM period of sufficient length
+#         nrem_period_start = nrem_start
+#         nrem_length = 0
+        
+#         for i in range(nrem_start, len(hypno_smooth)):
+#             if hypno_smooth[i] in [1, 2, 3]:  # Any NREM
+#                 nrem_length += 1
+#             else:
+#                 break
+        
+#         if nrem_length < min_nrem_epochs:
+#             current_pos = nrem_period_start + nrem_length + 1
+#             continue
+        
+#         # Look for REM period
+#         rem_start = None
+#         search_end = min(nrem_period_start + first_rem_epochs, len(hypno_smooth))
+        
+#         # For first cycle, look within first REM window
+#         if cycle_num == 1:
+#             search_start = nrem_period_start
+#         else:
+#             search_start = nrem_period_start + min_nrem_epochs
+        
+#         for i in range(search_start, search_end):
+#             if hypno_smooth[i] == 4:
+#                 # Check if REM period is long enough
+#                 rem_length = 0
+#                 rem_start_temp = i
+#                 for j in range(i, len(hypno_smooth)):
+#                     if hypno_smooth[j] == 4:
+#                         rem_length += 1
+#                     else:
+#                         break
+                
+#                 if rem_length >= min_rem_epochs or (cycle_num == 1 and rem_length > 0):
+#                     rem_start = rem_start_temp
+#                     rem_end = rem_start_temp + rem_length - 1
+#                     break
+        
+#         # If no REM found but sufficient NREM, still count as cycle (esp. for last cycle)
+#         if rem_start is None:
+#             # Check if this is potentially the last cycle
+#             remaining_sleep = np.sum(hypno_smooth[nrem_period_start:] > 0)
+#             if remaining_sleep > min_nrem_epochs:
+#                 cycles.append({
+#                     'cycle': cycle_num,
+#                     'start': nrem_period_start,
+#                     'end': len(hypno_smooth) - 1,
+#                     'nrem_start': nrem_period_start,
+#                     'rem_start': None,
+#                     'rem_end': None
+#                 })
+#                 cycle_hypno[nrem_period_start:] = cycle_num
+#                 break
+#             else:
+#                 current_pos = search_end
+#                 continue
+        
+#         # We have a complete cycle
+#         cycle_end = rem_end
+        
+#         # Extend cycle end to include any trailing N1
+#         for i in range(rem_end + 1, len(hypno_smooth)):
+#             if hypno_smooth[i] == 1:
+#                 cycle_end = i
+#             else:
+#                 break
+        
+#         cycles.append({
+#             'cycle': cycle_num,
+#             'start': nrem_period_start,
+#             'end': cycle_end,
+#             'nrem_start': nrem_period_start,
+#             'rem_start': rem_start,
+#             'rem_end': rem_end
+#         })
+        
+#         cycle_hypno[nrem_period_start:cycle_end + 1] = cycle_num
+        
+#         cycle_num += 1
+#         current_pos = cycle_end + 1
+    
+#     # Post-processing: Handle short cycles at the end of night
+#     if len(cycles) >= 2:
+#         # Check if last cycle is suspiciously short
+#         last_cycle = cycles[-1]
+#         last_duration = last_cycle['end'] - last_cycle['start'] + 1
+        
+#         if last_duration < merge_threshold_epochs:
+#             # Option 1: Merge with previous cycle if close enough
+#             prev_cycle = cycles[-2]
+#             gap = last_cycle['start'] - prev_cycle['end']
+            
+#             if gap < merge_rem_epochs:  # If cycles are close
+#                 # Merge the cycles
+#                 prev_cycle['end'] = last_cycle['end']
+#                 if last_cycle['rem_start'] is not None:
+#                     # Update REM end to include the last REM
+#                     prev_cycle['rem_end'] = last_cycle['rem_end']
+                
+#                 # Update cycle_hypno
+#                 cycle_hypno[cycle_hypno == last_cycle['cycle']] = prev_cycle['cycle']
+                
+#                 # Remove the last cycle
+#                 cycles.pop()
+            
+#             # Option 2: If can't merge, check if it's just a REM fragment
+#             elif last_cycle['rem_start'] is not None and last_cycle['nrem_start'] == last_cycle['rem_start']:
+#                 # This is just a REM fragment, not a real cycle
+#                 cycle_hypno[cycle_hypno == last_cycle['cycle']] = 0
+#                 cycles.pop()
+    
+#     # Additional check: Remove any cycles that are too short
+#     cycles_to_keep = []
+#     for cycle in cycles:
+#         duration = cycle['end'] - cycle['start'] + 1
+#         if duration >= min_cycle_epochs or cycle['cycle'] == 1:  # Keep first cycle even if short
+#             cycles_to_keep.append(cycle)
+#         else:
+#             # Remove from cycle_hypno
+#             cycle_hypno[cycle_hypno == cycle['cycle']] = 0
+    
+#     # Renumber cycles if any were removed
+#     if len(cycles_to_keep) < len(cycles):
+#         cycles = cycles_to_keep
+#         # Renumber in cycle_hypno
+#         for i, cycle in enumerate(cycles):
+#             old_num = cycle['cycle']
+#             new_num = i + 1
+#             cycle['cycle'] = new_num
+#             cycle_hypno[cycle_hypno == old_num] = new_num
+    
+#     # Fill gaps between cycles with sleep stages
+#     if len(cycles) > 1:
+#         for i in range(len(cycles) - 1):
+#             current_cycle = cycles[i]
+#             next_cycle = cycles[i + 1]
+            
+#             gap_start = current_cycle['end'] + 1
+#             gap_end = next_cycle['start'] - 1
+            
+#             if gap_start <= gap_end:
+#                 # Check what's in the gap
+#                 gap_stages = hypno_smooth[gap_start:gap_end + 1]
+                
+#                 # If there's any sleep in the gap, assign it
+#                 if np.any(gap_stages > 0):
+#                     # Assign to the cycle with more similar stages
+#                     # or to the previous cycle by default
+#                     cycle_hypno[gap_start:gap_end + 1] = current_cycle['cycle']
+                    
+#                     # Update cycle end time
+#                     current_cycle['end'] = gap_end
+    
+#     # Apply gap filling if requested
+#     if fill_gaps:
+#         cycles, cycle_hypno = fill_cycle_gaps(cycles, cycle_hypno, hypno_smooth, gap_assignment)
+    
+#     return cycles, cycle_hypno    
+
+def summarize_cycles(cycles, hypno, sf_hypno=1/30):
+    """
+    Create summary statistics for detected cycles.
+    
+    Parameters
+    ----------
+    cycles : list
+        Output from detect_sleep_cycles
+    hypno : array
+        Sleep stage array
+    sf_hypno : float
+        Sampling frequency
+    
+    Returns
+    -------
+    summary : pd.DataFrame
+        Summary statistics for each cycle
+    """
+    summaries = []
+    
+    for cycle in cycles:
+        summary = {
+            'cycle': cycle['cycle'],
+            'duration_min': (cycle['end'] - cycle['start'] + 1) / (sf_hypno * 60),
+            'nrem_duration_min': 0,
+            'rem_duration_min': 0,
+            'n1_min': 0,
+            'n2_min': 0,
+            'n3_min': 0,
+            'rem_latency_min': None
+        }
+        
+        # Calculate stage durations within cycle
+        cycle_stages = hypno[cycle['start']:cycle['end'] + 1]
+        for stage in [1, 2, 3, 4]:
+            duration = np.sum(cycle_stages == stage) / (sf_hypno * 60)
+            if stage == 1:
+                summary['n1_min'] = duration
+            elif stage == 2:
+                summary['n2_min'] = duration
+            elif stage == 3:
+                summary['n3_min'] = duration
+            elif stage == 4:
+                summary['rem_duration_min'] = duration
+        
+        summary['nrem_duration_min'] = summary['n1_min'] + summary['n2_min'] + summary['n3_min']
+        summary['rem_nrem_ratio'] = summary['rem_duration_min'] / (summary['n1_min'] + summary['n2_min'] + summary['n3_min'])
+        summary['midtime'] = cycle['start'] + (cycle['end'] - cycle['start'])/2
+        
+        # REM latency (from cycle start to REM onset)
+        if cycle['rem_start'] is not None:
+            summary['rem_latency_min'] = (cycle['rem_start'] - cycle['start']) / (sf_hypno * 60)
+        
+        summaries.append(summary)
+    
+    return pd.DataFrame(summaries)
+
+def fill_cycle_gaps(cycles, cycle_hypno, hypno_smooth, gap_assignment='previous'):
+    """
+    Fill gaps between cycles with appropriate cycle assignments.
+    
+    Parameters
+    ----------
+    cycles : list
+        List of cycle dictionaries
+    cycle_hypno : array
+        Current cycle assignments
+    hypno_smooth : array
+        Smoothed hypnogram
+    gap_assignment : str
+        How to assign gaps: 'previous', 'next', 'split', 'closest_rem'
+    
+    Returns
+    -------
+    cycles : list
+        Updated cycle list
+    cycle_hypno : array
+        Updated cycle assignments
+    """
+    if len(cycles) <= 1:
+        return cycles, cycle_hypno
+    
+    for i in range(len(cycles) - 1):
+        current_cycle = cycles[i]
+        next_cycle = cycles[i + 1]
+        
+        gap_start = current_cycle['end'] + 1
+        gap_end = next_cycle['start'] - 1
+        
+        if gap_start <= gap_end:
+            gap_stages = hypno_smooth[gap_start:gap_end + 1]
+            
+            # Only process if there's sleep in the gap
+            if np.any(gap_stages > 0):
+                if gap_assignment == 'previous':
+                    # Assign all to previous cycle
+                    cycle_hypno[gap_start:gap_end + 1] = current_cycle['cycle']
+                    current_cycle['end'] = gap_end
+                    
+                elif gap_assignment == 'next':
+                    # Assign all to next cycle
+                    cycle_hypno[gap_start:gap_end + 1] = next_cycle['cycle']
+                    next_cycle['start'] = gap_start
+                    
+                elif gap_assignment == 'split':
+                    # Split the gap in the middle
+                    mid_point = (gap_start + gap_end) // 2
+                    cycle_hypno[gap_start:mid_point + 1] = current_cycle['cycle']
+                    cycle_hypno[mid_point + 1:gap_end + 1] = next_cycle['cycle']
+                    current_cycle['end'] = mid_point
+                    next_cycle['start'] = mid_point + 1
+                    
+                elif gap_assignment == 'closest_rem':
+                    # Assign based on proximity to REM periods
+                    if current_cycle['rem_end'] is not None and next_cycle['rem_start'] is not None:
+                        # Find the point closest to equidistant from both REM periods
+                        for idx in range(gap_start, gap_end + 1):
+                            dist_to_prev_rem = idx - current_cycle['rem_end']
+                            dist_to_next_rem = next_cycle['rem_start'] - idx
+                            
+                            if dist_to_prev_rem <= dist_to_next_rem:
+                                cycle_hypno[idx] = current_cycle['cycle']
+                            else:
+                                cycle_hypno[idx] = next_cycle['cycle']
+                        
+                        # Update cycle boundaries
+                        current_end = np.where(cycle_hypno[gap_start:gap_end + 1] == current_cycle['cycle'])[0]
+                        if len(current_end) > 0:
+                            current_cycle['end'] = gap_start + current_end[-1]
+                        
+                        next_start = np.where(cycle_hypno[gap_start:gap_end + 1] == next_cycle['cycle'])[0]
+                        if len(next_start) > 0:
+                            next_cycle['start'] = gap_start + next_start[0]
+                    else:
+                        # Fallback to previous assignment
+                        cycle_hypno[gap_start:gap_end + 1] = current_cycle['cycle']
+                        current_cycle['end'] = gap_end
+    
+    # Handle gap after last cycle
+    last_cycle = cycles[-1]
+    final_sleep = np.where(hypno_smooth[last_cycle['end'] + 1:] > 0)[0]
+    if len(final_sleep) > 0:
+        final_sleep_start = last_cycle['end'] + 1 + final_sleep[0]
+        final_sleep_end = last_cycle['end'] + 1 + final_sleep[-1]
+        cycle_hypno[final_sleep_start:final_sleep_end + 1] = last_cycle['cycle']
+        last_cycle['end'] = final_sleep_end
+    
+    return cycles, cycle_hypno
+
+
+# Update the main function to use gap filling
+def detect_sleep_cycles(hypno, sf_hypno=1/30, min_nrem_duration=15, min_rem_duration=1, 
+                       awakening_threshold=5, merge_close_rem=10, first_rem_window=120,
+                       min_cycle_duration=60, last_cycle_merge_threshold=45,
+                       fill_gaps=True, gap_assignment='previous',
+                       min_nrem_between_cycles=10):
+    """
+    Detect sleep cycles from a hypnogram using published criteria.
+    
+    Based on Feinberg & Floyd (1979) and updated by Jenni & Carskadon (2004),
+    with modifications for micro-awakening handling and end-of-night short cycles.
+    
+    Parameters
+    ----------
+    hypno : array
+        Sleep stage array (0=Wake, 1=N1, 2=N2, 3=N3, 4=REM)
+    sf_hypno : float
+        Sampling frequency of hypnogram (default 1/30 Hz for 30s epochs)
+    min_nrem_duration : int
+        Minimum NREM duration in minutes to start a cycle (default 15)
+    min_rem_duration : float
+        Minimum REM duration in minutes to be counted (default 1)
+    awakening_threshold : int
+        Maximum awakening duration in minutes to not break cycle (default 5)
+    merge_close_rem : int
+        Merge REM periods separated by less than this many minutes (default 10)
+    first_rem_window : int
+        Window in minutes to look for first REM period (default 120)
+    min_cycle_duration : int
+        Minimum cycle duration in minutes (default 60)
+    last_cycle_merge_threshold : int
+        Merge last cycle if shorter than this many minutes (default 45)
+    fill_gaps : bool
+        Whether to fill gaps between cycles (default True)
+    gap_assignment : str
+        How to assign gaps: 'previous', 'next', 'split', 'closest_rem' (default 'previous')
+    min_nrem_between_cycles : int
+        Minimum NREM duration in minutes between REM periods to start new cycle (default 10)
+    
+    Returns
+    -------
+    cycles : list of dicts
+        Each dict contains 'start', 'end', 'nrem_start', 'rem_start', 'rem_end'
+    cycle_hypno : array
+        Same length as hypno, with cycle number (0 = no cycle)
+    """
+    
+    # Convert parameters from minutes to epochs
+    epochs_per_min = int(60 * sf_hypno)
+    min_nrem_epochs = min_nrem_duration * epochs_per_min
+    min_rem_epochs = int(min_rem_duration * epochs_per_min)
+    wake_threshold_epochs = awakening_threshold * epochs_per_min
+    merge_rem_epochs = merge_close_rem * epochs_per_min
+    first_rem_epochs = first_rem_window * epochs_per_min
+    min_cycle_epochs = min_cycle_duration * epochs_per_min
+    merge_threshold_epochs = last_cycle_merge_threshold * epochs_per_min
+    min_nrem_between_epochs = min_nrem_between_cycles * epochs_per_min
+    
+    # Step 1: Handle micro-awakenings by filling short wake periods
+    hypno_smooth = hypno.copy()
+    wake_mask = hypno == 0
+    
+    # Label continuous wake periods
+    wake_labeled, n_wake_periods = label(wake_mask)
+    
+    # Fill short wake periods (less than threshold)
+    for i in range(1, n_wake_periods + 1):
+        wake_period = wake_labeled == i
+        period_length = np.sum(wake_period)
+        
+        if period_length < wake_threshold_epochs:
+            # Find what sleep stage surrounds this wake period
+            indices = np.where(wake_period)[0]
+            start_idx = indices[0]
+            end_idx = indices[-1]
+            
+            # Look at stages before and after
+            before_stage = hypno_smooth[start_idx - 1] if start_idx > 0 else 0
+            after_stage = hypno_smooth[end_idx + 1] if end_idx < len(hypno_smooth) - 1 else 0
+            
+            # Fill with most common surrounding stage (excluding wake)
+            if before_stage > 0 and after_stage > 0:
+                fill_stage = before_stage if before_stage == after_stage else min(before_stage, after_stage)
+                hypno_smooth[wake_period] = fill_stage
+    
+    # Step 2: Merge close REM periods (but only if insufficient NREM between them)
+    rem_mask = hypno_smooth == 4
+    rem_labeled, n_rem_periods = label(rem_mask)
+    
+    # Identify all REM periods first
+    rem_periods = []
+    for i in range(1, n_rem_periods + 1):
+        rem_indices = np.where(rem_labeled == i)[0]
+        if len(rem_indices) >= min_rem_epochs:
+            rem_periods.append({
+                'label': i,
+                'start': rem_indices[0],
+                'end': rem_indices[-1]
+            })
+    
+    # Check each pair of consecutive REM periods
+    if len(rem_periods) > 1:
+        i = 0
+        while i < len(rem_periods) - 1:
+            rem1 = rem_periods[i]
+            rem2 = rem_periods[i + 1]
+            
+            gap_start = rem1['end'] + 1
+            gap_end = rem2['start'] - 1
+            gap_length = gap_end - gap_start + 1
+            
+            if gap_length < merge_rem_epochs:
+                # Check NREM content in the gap
+                gap_stages = hypno_smooth[gap_start:gap_end + 1]
+                nrem_in_gap = np.sum((gap_stages >= 1) & (gap_stages <= 3))
+                
+                # Only merge if insufficient NREM between REM periods
+                if nrem_in_gap < min_nrem_between_epochs:
+                    # Merge the REM periods
+                    hypno_smooth[gap_start:gap_end + 1] = 4
+                    # Update the first REM period and remove the second
+                    rem_periods[i]['end'] = rem2['end']
+                    rem_periods.pop(i + 1)
+                    continue
+            
+            i += 1
+    
+    # Step 3: Identify sleep cycles
+    cycles = []
+    cycle_hypno = np.zeros_like(hypno)
+    
+    # Find sleep onset (first N2 or N3)
+    sleep_onset = np.where((hypno_smooth == 2) | (hypno_smooth == 3))[0]
+    if len(sleep_onset) == 0:
+        return cycles, cycle_hypno
+    
+    sleep_onset = sleep_onset[0]
+    current_pos = sleep_onset
+    cycle_num = 1
+    
+    while current_pos < len(hypno_smooth):
+        # Find start of NREM period (N2 or N3)
+        nrem_start = None
+        for i in range(current_pos, len(hypno_smooth)):
+            if hypno_smooth[i] in [2, 3]:
+                nrem_start = i
+                break
+        
+        if nrem_start is None:
+            break
+        
+        # Find continuous NREM period of sufficient length
+        nrem_period_start = nrem_start
+        nrem_length = 0
+        
+        for i in range(nrem_start, len(hypno_smooth)):
+            if hypno_smooth[i] in [1, 2, 3]:  # Any NREM
+                nrem_length += 1
+            else:
+                break
+        
+        if nrem_length < min_nrem_epochs:
+            current_pos = nrem_period_start + nrem_length + 1
+            continue
+        
+        # Look for REM period
+        rem_start = None
+        search_end = min(nrem_period_start + first_rem_epochs, len(hypno_smooth))
+        
+        # For first cycle, look within first REM window
+        if cycle_num == 1:
+            search_start = nrem_period_start
+        else:
+            search_start = nrem_period_start + min_nrem_epochs
+        
+        for i in range(search_start, search_end):
+            if hypno_smooth[i] == 4:
+                # Check if REM period is long enough
+                rem_length = 0
+                rem_start_temp = i
+                for j in range(i, len(hypno_smooth)):
+                    if hypno_smooth[j] == 4:
+                        rem_length += 1
+                    else:
+                        break
+                
+                if rem_length >= min_rem_epochs or (cycle_num == 1 and rem_length > 0):
+                    rem_start = rem_start_temp
+                    rem_end = rem_start_temp + rem_length - 1
+                    break
+        
+        # If no REM found but sufficient NREM, still count as cycle (esp. for last cycle)
+        if rem_start is None:
+            # Check if this is potentially the last cycle
+            remaining_sleep = np.sum(hypno_smooth[nrem_period_start:] > 0)
+            if remaining_sleep > min_nrem_epochs:
+                cycles.append({
+                    'cycle': cycle_num,
+                    'start': nrem_period_start,
+                    'end': len(hypno_smooth) - 1,
+                    'nrem_start': nrem_period_start,
+                    'rem_start': None,
+                    'rem_end': None
+                })
+                cycle_hypno[nrem_period_start:] = cycle_num
+                break
+            else:
+                current_pos = search_end
+                continue
+        
+        # We have a complete cycle
+        cycle_end = rem_end
+        
+        # Check if there's significant NREM after this REM that would start a new cycle
+        next_nrem_start = None
+        for i in range(rem_end + 1, min(rem_end + 1 + min_nrem_between_epochs * 2, len(hypno_smooth))):
+            if hypno_smooth[i] in [2, 3]:  # N2 or N3
+                # Check for continuous NREM
+                nrem_length = 0
+                for j in range(i, len(hypno_smooth)):
+                    if hypno_smooth[j] in [1, 2, 3]:
+                        nrem_length += 1
+                    else:
+                        break
+                
+                if nrem_length >= min_nrem_between_epochs:
+                    # This NREM period is substantial enough to start a new cycle
+                    next_nrem_start = i
+                    cycle_end = i - 1
+                    break
+        
+        # Extend cycle end to include any trailing N1 (only if no new cycle starting)
+        if next_nrem_start is None:
+            for i in range(rem_end + 1, len(hypno_smooth)):
+                if hypno_smooth[i] == 1:
+                    cycle_end = i
+                elif hypno_smooth[i] in [2, 3]:
+                    # This might be the start of a new cycle
+                    break
+                else:
+                    break
+        
+        cycles.append({
+            'cycle': cycle_num,
+            'start': nrem_period_start,
+            'end': cycle_end,
+            'nrem_start': nrem_period_start,
+            'rem_start': rem_start,
+            'rem_end': rem_end
+        })
+        
+        cycle_hypno[nrem_period_start:cycle_end + 1] = cycle_num
+        
+        cycle_num += 1
+        current_pos = cycle_end + 1
+    
+    # Post-processing: Handle short cycles at the end of night
+    if len(cycles) >= 2:
+        # Check if last cycle is suspiciously short
+        last_cycle = cycles[-1]
+        last_duration = last_cycle['end'] - last_cycle['start'] + 1
+        
+        if last_duration < merge_threshold_epochs:
+            # Option 1: Merge with previous cycle if close enough
+            prev_cycle = cycles[-2]
+            gap = last_cycle['start'] - prev_cycle['end']
+            
+            if gap < merge_rem_epochs:  # If cycles are close
+                # Merge the cycles
+                prev_cycle['end'] = last_cycle['end']
+                if last_cycle['rem_start'] is not None:
+                    # Update REM end to include the last REM
+                    prev_cycle['rem_end'] = last_cycle['rem_end']
+                
+                # Update cycle_hypno
+                cycle_hypno[cycle_hypno == last_cycle['cycle']] = prev_cycle['cycle']
+                
+                # Remove the last cycle
+                cycles.pop()
+            
+            # Option 2: If can't merge, check if it's just a REM fragment
+            elif last_cycle['rem_start'] is not None and last_cycle['nrem_start'] == last_cycle['rem_start']:
+                # This is just a REM fragment, not a real cycle
+                cycle_hypno[cycle_hypno == last_cycle['cycle']] = 0
+                cycles.pop()
+    
+    # Additional check: Remove any cycles that are too short
+    cycles_to_keep = []
+    for cycle in cycles:
+        duration = cycle['end'] - cycle['start'] + 1
+        if duration >= min_cycle_epochs or cycle['cycle'] == 1:  # Keep first cycle even if short
+            cycles_to_keep.append(cycle)
+        else:
+            # Remove from cycle_hypno
+            cycle_hypno[cycle_hypno == cycle['cycle']] = 0
+    
+    # Renumber cycles if any were removed
+    if len(cycles_to_keep) < len(cycles):
+        cycles = cycles_to_keep
+        # Renumber in cycle_hypno
+        for i, cycle in enumerate(cycles):
+            old_num = cycle['cycle']
+            new_num = i + 1
+            cycle['cycle'] = new_num
+            cycle_hypno[cycle_hypno == old_num] = new_num
+    
+    # Fill gaps between cycles with sleep stages
+    if len(cycles) > 1:
+        for i in range(len(cycles) - 1):
+            current_cycle = cycles[i]
+            next_cycle = cycles[i + 1]
+            
+            gap_start = current_cycle['end'] + 1
+            gap_end = next_cycle['start'] - 1
+            
+            if gap_start <= gap_end:
+                # Check what's in the gap
+                gap_stages = hypno_smooth[gap_start:gap_end + 1]
+                
+                # If there's any sleep in the gap, assign it
+                if np.any(gap_stages > 0):
+                    # Assign to the cycle with more similar stages
+                    # or to the previous cycle by default
+                    cycle_hypno[gap_start:gap_end + 1] = current_cycle['cycle']
+                    
+                    # Update cycle end time
+                    current_cycle['end'] = gap_end
+    
+    # Apply gap filling if requested
+    if fill_gaps:
+        cycles, cycle_hypno = fill_cycle_gaps(cycles, cycle_hypno, hypno_smooth, gap_assignment)
+    
+    return cycles, cycle_hypno
+
+def smooth_hypno_custom(hypno, window=10):
+    """
+    Smooth a hypnogram array with custom logic:
+    - Use the mode of the window
+    - If any REM present in window → assign REM
+    - Else if any N3 present → assign N3
+    """
+    hypno = np.asarray(hypno)
+    n = len(hypno)
+    half_win = window // 2
+    smoothed = np.empty(n, dtype=hypno.dtype)
+
+    for i in range(n):
+        start = max(0, i - half_win)
+        end = min(n, i + half_win + 1)
+        window_stages = hypno[start:end]
+
+        if 'REM' in window_stages:
+            smoothed[i] = 4
+        elif 'N3' in window_stages:
+            smoothed[i] = 3
+        else:
+            smoothed[i] = mode(window_stages, keepdims=False).mode
+
+    return smoothed

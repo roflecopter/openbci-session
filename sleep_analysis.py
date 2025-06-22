@@ -5,12 +5,13 @@ import mne
 import numpy as np
 import os
 import pandas as pd
+import pickle
 import seaborn as sns
 import sys
 import yaml
 import yasa
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dtime, timezone
 from time import sleep
 
 # config, if relative path not working then use explicit path to working dir (repo dir with scripts and yml) or modify working directory in IDE/GUI settings
@@ -30,7 +31,7 @@ from multitaper_spectrogram_python import multitaper_spectrogram, nanpow2db
 # import custom sleep functions
 os.chdir(working_dir)
 # https://github.com/roflecopter/qskit # install qskit if you want to process ECG to HR/HRV
-from sleep_functions import acc_process, plot_radar, psd_plot, plot_multitaper_spect_ch, plot_multitaper_spect_all, create_spect, topomap_plot, process_bp, process_ecg, process_hypno, raw_preprocess, electrode_side, m2h, plot_average, plot_rolling_spindle_density, plot_hypnogram, sleep_stats, spindle_metrics, spindles_slow_fast, sws_metrics
+from sleep_functions import acc_process, psds, summarize_cycles, smooth_hypno_custom, detect_sleep_cycles, plot_radar, psd_plot, plot_multitaper_spect_ch, plot_multitaper_spect_all, create_spect, topomap_plot, process_bp, process_ecg, process_hypno, raw_preprocess, electrode_side, m2h, plot_average, plot_rolling_spindle_density, plot_hypnogram, sleep_stats, spindle_metrics, spindles_slow_fast, sws_metrics
 
 np.set_printoptions(suppress=True, formatter={'float_kind':'{:f}'.format})
 pd.set_option('future.no_silent_downcasting', True)
@@ -93,6 +94,15 @@ spect_specs = f'num_tapers={num_tapers}, window={window_params}'
 
 stages = {'W': 0,'N1': 1,'N2': 2,'N3': 3,'R': 4}
 stages_plot = [0,4,2,3]
+sf_hypno = 1/30
+
+pa_sp_center = "Peak"
+pa_sw_center = 'PosPeak'
+pa_time_before = 1
+pa_time_after = 1
+pa_filt = (None,None)
+pa_mask = None
+plot_avg = True
 
 # list of bands for band power
 bp_bands = [
@@ -174,22 +184,61 @@ for index, session in enumerate(sessions):
         session['hypno_df']['dtr'] = session['hypno_df']['dt'].dt.round('30s')
         session['hypno_df']['cumtime'] = (session['hypno_df']['dt']-session['dts']).dt.total_seconds()
         session['sleep_stats_info'] = sleep_stats(yasa.hypno_int_to_str(session['hypnos_adj']))
+        session['dts_sol'] = session['dts'] + timedelta(minutes=session['sleep_stats_info']['SOL_ADJ'])
+        session['dte'] = (session['dts_sol'] + timedelta(minutes=session['sleep_stats_info']['SPT']))
+        session['midtime'] = session['dts_sol'] + timedelta(seconds=(session['dte'] - session['dts_sol']).total_seconds()/2)
 
     if load_sp_sw:
-        sp = yasa.spindles_detect(raw, include=(2), hypno=yasa.hypno_upsample_to_data(session['hypnos_adj'], sf_hypno=1/30, data=raw))
-        if not (1 == np.sum(np.isin(session['sp_ch'], session['eeg']))/len(session['sp_ch'])):
-            sp_ch = [session['eeg'][0]]
-        sp_metric = spindle_metrics(sp, session['sleep_stats_info']['SOL_ADJ'], session['hypnos_adj'], sp_ch=session['sp_ch'], stages=[2], period=4.5*3600)
+        sp_summary_file = f"{session['dts'].strftime(cfg['file_dt_format'])} {user} sp_summary.parquet"; sp_summary_filename = os.path.join(cfg['cache_dir'], sp_summary_file)
+        sp_sync_file = f"{session['dts'].strftime(cfg['file_dt_format'])} {user} sp_sync.parquet"; sp_sync_filename = os.path.join(cfg['cache_dir'], sp_sync_file)
+        sp_metric_file = f"{session['dts'].strftime(cfg['file_dt_format'])} {user} sp_metric.pkl"; sp_metric_filename = os.path.join(cfg['cache_dir'], sp_metric_file)
+        if os.path.exists(sp_summary_filename) and os.path.exists(sp_sync_filename) and os.path.exists(sp_metric_filename):
+            session['sp_summary'] = pd.read_parquet(sp_summary_filename)
+            session['sp_sync'] = pd.read_parquet(sp_sync_filename)
+            with open(sp_metric_filename, "rb") as f:
+                session['sp_metric'] = pickle.load(f)
+        else:
+            sp = yasa.spindles_detect(raw, include=(2), hypno=yasa.hypno_upsample_to_data(session['hypnos_adj'], sf_hypno=sf_hypno, data=raw))
+            session['sp_summary'] = sp.summary()
+            session['sp_sync'] = sp.get_sync_events(center=pa_sp_center, time_before=pa_time_before, time_after=pa_time_after, filt=pa_filt, mask=pa_mask)            
+            if not (1 == np.sum(np.isin(session['sp_ch'], session['eeg']))/len(session['sp_ch'])):
+                sp_ch = [session['eeg'][0]]
+            session['sp_metric'] = spindle_metrics(sp, session['sleep_stats_info']['SOL_ADJ'], session['hypnos_adj'], sp_ch=session['sp_ch'], stages=[2], period=4.5*3600)
 
-        sw = yasa.sw_detect(raw, include=(2,3), hypno=yasa.hypno_upsample_to_data(session['hypnos_adj'], sf_hypno=1/30, data=raw))                
-        if not (1 == np.sum(np.isin(session['sw_ch'], session['eeg']))/len(session['sw_ch'])):
-            sw_ch = [session['eeg'][0]]
-        sw_metric = sws_metrics(sw, session['sleep_stats_info']['SOL_ADJ'], session['hypnos_adj'], sw_ch=session['sw_ch'], stages=[2,3], period=4.5*3600)
-        
-        session['sp'] = sp
-        session['sp_metric'] = sp_metric
-        session['sw'] = sw
-        session['sw_metric'] = sw_metric
+            session['sp_summary'].to_parquet(sp_summary_filename, compression="brotli")
+            session['sp_sync'].to_parquet(sp_sync_filename, compression="brotli")
+            with open(sp_metric_filename, "wb") as f:
+                pickle.dump(session['sp_metric'], f)
+
+        sw_summary_file = f"{session['dts'].strftime(cfg['file_dt_format'])} {user} sw_summary.parquet"; sw_summary_filename = os.path.join(cfg['cache_dir'], sw_summary_file)
+        sw_summary_ch_file = f"{session['dts'].strftime(cfg['file_dt_format'])} {user} sw_summary_ch.parquet"; sw_summary_ch_filename = os.path.join(cfg['cache_dir'], sw_summary_ch_file)
+        sw_summary_chst_file = f"{session['dts'].strftime(cfg['file_dt_format'])} {user} sw_summary_chst.parquet"; sw_summary_chst_filename = os.path.join(cfg['cache_dir'], sw_summary_chst_file)
+        sw_sync_file = f"{session['dts'].strftime(cfg['file_dt_format'])} {user} sw_sync.parquet"; sw_sync_filename = os.path.join(cfg['cache_dir'], sw_sync_file)
+        sw_metric_file = f"{session['dts'].strftime(cfg['file_dt_format'])} {user} sw_metric.pkl"; sw_metric_filename = os.path.join(cfg['cache_dir'], sw_metric_file)
+        if os.path.exists(sw_summary_filename) and os.path.exists(sw_summary_ch_filename) and os.path.exists(sw_summary_chst_filename) and os.path.exists(sw_sync_filename) and os.path.exists(sw_metric_filename):
+            session['sw_summary'] = pd.read_parquet(sw_summary_filename)
+            session['sw_summary_ch'] = pd.read_parquet(sw_summary_ch_filename)
+            session['sw_summary_chst'] = pd.read_parquet(sw_summary_chst_filename)
+            session['sw_sync'] = pd.read_parquet(sw_sync_filename)
+            with open(sw_metric_filename, "rb") as f:
+                session['sw_metric'] = pickle.load(f)
+        else:
+            sw = yasa.sw_detect(raw, include=(2,3), hypno=yasa.hypno_upsample_to_data(session['hypnos_adj'], sf_hypno=sf_hypno, data=raw))                
+            if not (1 == np.sum(np.isin(session['sw_ch'], session['eeg']))/len(session['sw_ch'])):
+                sw_ch = [session['eeg'][0]]
+            session['sw_metric'] = sws_metrics(sw, session['sleep_stats_info']['SOL_ADJ'], session['hypnos_adj'], sw_ch=session['sw_ch'], stages=[2,3], period=4.5*3600)
+            session['sw_sync']= sw.get_sync_events(center=pa_sw_center, time_before=pa_time_before, time_after=pa_time_after, filt=pa_filt, mask=pa_mask)
+            session['sw_summary'] = sw.summary()
+            session['sw_summary_ch'] = sw.summary(grp_chan=True)
+            session['sw_summary_chst'] = sw.summary(grp_stage=True, grp_chan=True)
+            
+            session['sw_summary'].to_parquet(sw_summary_filename, compression="brotli")
+            session['sw_summary_ch'].to_parquet(sw_summary_ch_filename, compression="brotli")
+            session['sw_summary_chst'].to_parquet(sw_summary_chst_filename, compression="brotli")
+            session['sw_sync'].to_parquet(sw_sync_filename, compression="brotli")
+            with open(sw_metric_filename, "wb") as f:
+                pickle.dump(session['sw_metric'], f)
+
     sessions[index] = session
 
 if 'Hypno' in plots:
@@ -201,25 +250,42 @@ if 'Hypno' in plots:
         fig.suptitle(f"{session['dts'].strftime(cfg['plot_dt_format'])} Hypnograms, {spect_specs}")
         hyp = yasa.hypno_int_to_str(session['hypnos_max']); hyp_stats = sleep_stats(hyp)
         ax = plot_hypnogram(yasa.Hypnogram(hyp, start=pd.to_datetime(session['dts'])), ax = axes[0])
-        ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / hyp_stats["TIB"]))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} (Max Probs)')
+        ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / (hyp_stats["SPT"] + hyp_stats["SOL_ADJ"])))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} (Max Probs)')
         hyp = yasa.hypno_int_to_str(session['hypnos_adj']); hyp_stats = sleep_stats(hyp)
         ax = plot_hypnogram(yasa.Hypnogram(hyp, start=pd.to_datetime(session['dts'])), ax = axes[1])
-        ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / hyp_stats["TIB"]))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} (Adj Probs)')
+        ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / (hyp_stats["SPT"] + hyp_stats["SOL_ADJ"])))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} (Adj Probs)')
         for ch_index, ch in enumerate(session['eeg']):
             hyp = session['hypnos'][ch_index]; hyp_stats = sleep_stats(hyp)
             ax = plot_hypnogram(yasa.Hypnogram(hyp, start=pd.to_datetime(session['dts'])), ax = axes[ch_index+2])
-            ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / hyp_stats["TIB"]))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} ({ch})')
+            ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / (hyp_stats["SPT"] + hyp_stats["SOL_ADJ"])))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} ({ch})')
 
         plt.tight_layout(rect=[0, 0, 1, 0.99])
         png_file = f"{session['dts'].strftime(cfg['file_dt_format'])} hypno channels {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)
         if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
-            
-        fig, ax = plt.subplots(figsize=(5, 2))
+        plt.plot(session['hypnos_max'])
+        fig, ax = plt.subplots(figsize=(7.5, 3))
         hyp = yasa.hypno_int_to_str(session['hypnos_adj']); hyp_stats = sleep_stats(hyp)
         ax = plot_hypnogram(yasa.Hypnogram(hyp, start=pd.to_datetime(session['dts'])), ax = ax, hl_lw=5)
-        ax.set_title(f'{session["dts"].strftime(cfg["plot_dt_format"])} Hypno Adj Probs\n{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / hyp_stats["TIB"]))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}')
+        ax.set_title(f'{session["dts"].strftime(cfg["plot_dt_format"])} Hypno Adj Probs\n{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / (hyp_stats["SPT"] + hyp_stats["SOL_ADJ"])))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}')
         plt.tight_layout(rect=[0, 0, 1, 0.99])
         png_file = f"{session['dts'].strftime(cfg['file_dt_format'])} hypno {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)
+        if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
+
+if 'Cycles' in plots:
+    for index, session in enumerate(sessions):
+        hypno = smooth_hypno_custom(session['hypnos_adj'].copy(), window=15)        
+        cycles, cycle_hypno = detect_sleep_cycles(hypno, min_cycle_duration=60, last_cycle_merge_threshold=45, min_nrem_between_cycles=10, gap_assignment='closest_rem')
+        cycles_sum = summarize_cycles(cycles, hypno)
+        rem_prosp_time = session['dts'] + timedelta(minutes=cycles_sum.loc[cycles_sum['rem_nrem_ratio'].idxmax()]['midtime']/(sf_hypno*60))
+        phase_time = datetime.combine((session['dts']+timedelta(minutes=session['sleep_stats_info']['TIB'])).date(), dtime(4, 0)).replace(tzinfo=timezone.utc)
+        rem_prosp_diff = (rem_prosp_time - phase_time).total_seconds()/60
+        
+        fig, ax = plt.subplots(figsize=(7.5, 3))
+        hyp = yasa.hypno_int_to_str(hypno); hyp_stats = sleep_stats(hyp)
+        ax = plot_hypnogram(yasa.Hypnogram(hyp, start=pd.to_datetime(session['dts'])), ax = ax, hl_lw=5, cycles=cycles, vline_dt=rem_prosp_time)
+        ax.set_title(f'{session["dts"].strftime(cfg["plot_dt_format"])} Cycles Smooth Adj Probs\n{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / (hyp_stats["SPT"] + hyp_stats["SOL_ADJ"])))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}, Phase {m2h(rem_prosp_diff)}')
+        plt.tight_layout(rect=[0, 0, 1, 0.99])
+        png_file = f"{session['dts'].strftime(cfg['file_dt_format'])} cycles {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)
         if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 
 if 'HRV' in plots: # Process ECG
@@ -280,29 +346,30 @@ if 'Spectrum' in plots:
 if 'Spindles' in plots:
     for index, session in enumerate(sessions):
         if (1 == np.sum(np.isin(session['sp_ch'], session['eeg']))/len(session['sp_ch'])):
-            fig = plot_rolling_spindle_density(session['sp'].summary(), session['dts'], cfg, channels=session['sp_ch'], window_minutes=10,stage_filter=[2],type_label='spindles', verbose=False)
+            fig, sp_density, sp_density_max, sleep_midtime, sp_phase_offset = plot_rolling_spindle_density(session['sp_summary'], session['sleep_stats_info'], session['dts'], cfg, channels=session['sp_ch'], window_minutes=10,stage_filter=[2],type_label='Spindles', verbose=False)
             png_file = f"{session['dts'].strftime(cfg['file_dt_format'])} SPD {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
             if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
     
 if 'SlowWaves' in plots:
     for index, session in enumerate(sessions):
         if (1 == np.sum(np.isin(session['sw_ch'], session['eeg']))/len(session['sw_ch'])):
-            fig = plot_rolling_spindle_density(session['sw'].summary(), session['dts'], cfg, channels=session['sw_ch'], window_minutes=10,stage_filter=[2,3],type_label='slow wave',verbose=False)    
+            fig, sw_density, sw_density_max, sleep_midtime, sw_phase_offset = plot_rolling_spindle_density(session['sw_summary'], session['sleep_stats_info'], session['dts'], cfg, channels=session['sw_ch'], window_minutes=10,stage_filter=[2,3],type_label='Slow Wave',verbose=False)    
             png_file = f"{session['dts'].strftime(cfg['file_dt_format'])} SWD {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
             if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 
 if 'SpindlesFreq' in plots:
     for index, session in enumerate(sessions):
         if (1 == np.sum(np.isin(session['sp_slow_ch'], session['eeg']))/len(session['sp_slow_ch'])) and (1 == np.sum(np.isin(session['sp_fast_ch'], session['eeg']))/len(session['sp_fast_ch'])):
-            fig = spindles_slow_fast(session['sp'].summary(), yasa.hypno_upsample_to_data(session['hypnos_adj'], sf_hypno=1/30, data=session['raw']), session['raw'], session['eeg'], slow_ch=session['sp_slow_ch'], fast_ch=session['sp_fast_ch'])
+            fig = spindles_slow_fast(session['sp_summary'], yasa.hypno_upsample_to_data(session['hypnos_adj'], sf_hypno=sf_hypno, data=session['raw']), session['raw'], session['eeg'], slow_ch=session['sp_slow_ch'], fast_ch=session['sp_fast_ch'])
             if fig is not None:
                 png_file = f"{session['dts'].strftime(cfg['file_dt_format'])} Spindles Freqs {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
                 if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 
 # Power frequency plot with mne PSD computation
 if 'Features' in plots:
-    for index, session in enumerate(sessions):
-        fig, amp, max_amp = psd_plot(session['dts'], session['raw_ori'], session['eeg'], session['ref_ch'], session['sp'], session['sp_ch'], session['sp_metric'], session['sw'], session['sw_ch'], session['sw_metric'], freq_method, w_fft, freq_lim, units, sig_specs, cfg, nj)
+    for index, session in enumerate(sessions):        
+        psd, freq = psds(session['raw_ori'], freq_method, session['eeg'], w_fft, freq_lim, nj)
+        fig, amp, max_amp = psd_plot(psd, freq, session['dts'], session['raw_ori'], session['eeg'], session['ref_ch'], session['sp_sync'], session['sp_summary'], session['sp_ch'], session['sp_metric'], session['sw_sync'], session['sw_summary_ch'], session['sw_summary_chst'], session['sw_ch'], session['sw_metric'], freq_method, w_fft, freq_lim, units, sig_specs, cfg, nj, plot_avg=plot_avg)
         png_file = f"{session['dts'].strftime(cfg['file_dt_format'])} PSD {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
         if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
 

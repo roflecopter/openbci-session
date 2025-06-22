@@ -40,12 +40,14 @@ nj = cfg['n_jobs'] # n_jobs for multiprocessing, usually n_cpu - 1
 
 old_fontsize = plt.rcParams["font.size"]
 plt.rcParams.update({"font.size": 8})
+debug = False
 
 # used for cache/image file names
 device = cfg['device']
 user = cfg['user']
 sleeps = cfg_base['sleeps']
-# sleeps = {1: sleeps[1]} # uncomment and choose specific sleep file, by default all files will be processed.
+if debug:
+    sleeps = {1: sleeps[1]} # uncomment and choose specific sleep file, by default all files will be processed.
 settings = cfg_base['settings']
 
 # ecg_invert: flips ecg signal, in case electrodes were placed inverse by mistake
@@ -102,7 +104,7 @@ pa_time_before = 1
 pa_time_after = 1
 pa_filt = (None,None)
 pa_mask = None
-plot_avg = True
+plot_avg = not debug
 
 # list of bands for band power
 bp_bands = [
@@ -328,11 +330,25 @@ if 'Spectrum' in plots:
     
     if load_spect:
         for index, session in enumerate(sessions):              
-            session['spects'], session['stimes'], session['sfreqs'] = create_spect(session['raw'], session['eeg'], multitaper_spectrogram, nanpow2db, spect_lim, frequency_range, time_bandwidth, num_tapers, 
-                window_params, min_nfft, detrend_opt, multiprocess, cpus,
-                weighting, plot_on, return_fig, clim_scale, verbose, xyflip)
+            spects_arr_file = f"{session['dts'].strftime(cfg['file_dt_format'])} {user} spects_arr.npz"; spects_arr_filename = os.path.join(cfg['cache_dir'], spects_arr_file)
+            stimes_arr_file = f"{session['dts'].strftime(cfg['file_dt_format'])} {user} stimes_arr.npz"; stimes_arr_filename = os.path.join(cfg['cache_dir'], stimes_arr_file)
+            sfreqs_arr_file = f"{session['dts'].strftime(cfg['file_dt_format'])} {user} sfreqs_arr.npz"; sfreqs_arr_filename = os.path.join(cfg['cache_dir'], sfreqs_arr_file)
+            if os.path.exists(spects_arr_filename) and os.path.exists(stimes_arr_filename) and os.path.exists(sfreqs_arr_filename):
+                loaded = np.load(spects_arr_filename)
+                session['spects'] = [loaded[f"arr{i}"] for i in range(len(loaded.files))]
+                loaded = np.load(stimes_arr_filename)
+                session['stimes'] = [loaded[f"arr{i}"] for i in range(len(loaded.files))]
+                loaded = np.load(sfreqs_arr_filename)
+                session['sfreqs'] = [loaded[f"arr{i}"] for i in range(len(loaded.files))]
+            else:
+                session['spects'], session['stimes'], session['sfreqs'] = create_spect(session['raw'], session['eeg'], multitaper_spectrogram, nanpow2db, spect_lim, frequency_range, time_bandwidth, num_tapers, 
+                    window_params, min_nfft, detrend_opt, multiprocess, cpus,
+                    weighting, plot_on, return_fig, clim_scale, verbose, xyflip)
+                np.savez_compressed(spects_arr_filename, **{f"arr{i}": arr for i, arr in enumerate(session['spects'])})
+                np.savez_compressed(stimes_arr_filename, **{f"arr{i}": arr for i, arr in enumerate(session['stimes'])})
+                np.savez_compressed(sfreqs_arr_filename, **{f"arr{i}": arr for i, arr in enumerate(session['sfreqs'])})
             sessions[index] = session
-
+    
     for index, session in enumerate(sessions): 
         fig = plot_multitaper_spect_all(session['raw'], session['dts'], session['eeg'], session['spects'], session['stimes'], session['sfreqs'], session['hypno_df'], spect_specs, cfg, nanpow2db, spect_vlim, clim_scale, sig_specs)
         png_file = f"{session['dts'].strftime(cfg['file_dt_format'])} merged spectrum {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    

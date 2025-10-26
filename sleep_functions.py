@@ -417,7 +417,7 @@ def plot_rolling_spindle_density(sp_summary, sleep_stats_infos, dts, cfg, channe
     dts_sol = dts + timedelta(minutes=sleep_stats_infos['SOL_ADJ'])
     dte = (dts_sol + timedelta(minutes=sleep_stats_infos['SPT']))
     mid = dts_sol + timedelta(seconds=(dte - dts_sol).total_seconds()/2)
-    phase_diff = abs((mid - max_density["time"]).total_seconds()/60)
+    phase_diff = (mid - max_density["time"]).total_seconds()/60
     
     # Create the plot
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
@@ -636,26 +636,29 @@ def raw_preprocess(raw, eog_ch, emg_ch, ecg_ch, acc_ch, misc_ch,
             ch_types[eog_c] = 'eog'
         raw.set_channel_types(ch_types)
     
-    emg = [elem for elem in ch if elem in emg_ch]
-    if len(emg) > 0:
-        ch_types = {}; 
-        for emg_c in emg:
-            ch_types[emg_c] = 'emg'
-        raw.set_channel_types(ch_types)
+    if len(emg_ch) > 0:
+        emg = [elem for elem in ch if elem in emg_ch]
+        if len(emg) > 0:
+            ch_types = {}; 
+            for emg_c in emg:
+                ch_types[emg_c] = 'emg'
+            raw.set_channel_types(ch_types)
 
-    ecg = [elem for elem in ch if elem in ecg_ch]
-    if len(ecg) > 0:
-        ch_types = {}; 
-        for ecg_c in ecg:
-            ch_types[ecg_c] = 'ecg'
-        raw.set_channel_types(ch_types)
+    if len(ecg_ch) > 0:
+        ecg = [elem for elem in ch if elem in ecg_ch]
+        if len(ecg) > 0:
+            ch_types = {}; 
+            for ecg_c in ecg:
+                ch_types[ecg_c] = 'ecg'
+            raw.set_channel_types(ch_types)
 
-    acc = [elem for elem in ch if elem in acc_ch]
-    if len(acc) > 0:
-        ch_types = {}; 
-        for acc_c in acc:
-            ch_types[acc_c] = 'misc'
-        raw.set_channel_types(ch_types)
+    if len(acc_ch) > 0:
+        acc = [elem for elem in ch if elem in acc_ch]
+        if len(acc) > 0:
+            ch_types = {}; 
+            for acc_c in acc:
+                ch_types[acc_c] = 'misc'
+            raw.set_channel_types(ch_types)
     
     ch_types = {}; 
     
@@ -1054,7 +1057,7 @@ L/H {lfhf_t['tst']}±{lfhf_t['tst_sd']} N3 {lfhf_t['n3']}±{lfhf_t['n3_sd']} R {
                 plt.subplots_adjust(left=0.01, right=0.99, top=0.9, bottom=0.01) 
                 plt.tight_layout()
                 plt.rcParams.update({"font.size": old_fontsize})
-    return fig, ecg_stat, hrv_stages, major_acc_epoch
+    return fig, ecg_stat, hrv_stages, major_acc_epoch, hrv_col, hrv
 
 def process_hrvst(raw, channel, hrvst_pre, hrvst_post, hrvst_period, hrvst_peroid_last, dts, cfg, user, device, ecg_invert=False):
     raw_hrv = raw.copy().pick(channel)
@@ -2350,3 +2353,164 @@ def smooth_hypno_custom(hypno, window=10):
             smoothed[i] = mode(window_stages, keepdims=False).mode
 
     return smoothed
+
+def compute_rolling_rem_propensity(hypno, start_time, epoch_sec=30, sol=0, window_min=10, stages=[4], lat_rem=0):
+    """
+    Compute rolling REM propensity (density) over time from YASA hypnogram data.
+    This estimates circadian phase offset by finding the peak REM density time relative to sleep onset latency (SOL).
+    
+    Parameters:
+    - hypno: numpy array of sleep stages (e.g., from YASA: 0=Wake, 1=N1, 2=N2, 3=N3, 4=REM)
+    - start_time_str: string of recording start time in 'HH:MM' or 'YYYY-MM-DD HH:MM:SS' format
+    - epoch_sec: seconds per epoch (default 30)
+    - window_min: rolling window size in minutes (default 10, matching your slow wave/spindle plots)
+    - stages: list of stages for propensity (default [4] for REM)
+    - channels: number of channels (default 1; adjust if multi-channel averaging needed, but your setup uses F7/F8 for REM)
+    
+    Returns:
+    - phase_offset_hr: float, time from SOL to peak REM density in hours (circadian phase marker)
+    - peak_time: datetime, absolute clock time of peak
+    - sol_time: datetime, absolute clock time of SOL
+    - fig: matplotlib figure for visualization (similar to your density plots)
+    """
+    
+    # hypno = session['hypnos_adj']
+    # epoch_sec = 1/sf_hypno
+    # start_time = session['dts']
+    # stages = [4]
+    # window_min = 10
+    # sol = session['sleep_stats']['SOL_ADJ']
+    
+    epoch_min = epoch_sec / 60.0
+    num_epochs = len(hypno)
+        
+    # # Binary indicator for target stages (REM=4)
+    is_target = np.isin(hypno, stages).astype(int)
+    
+    # DataFrame for rolling calculations
+    df = pd.DataFrame({'is_target': is_target})
+    
+    # Window in epochs
+    window_epochs = int(window_min / epoch_min)
+    
+    # Raw count: number of target epochs in rolling window
+    df['raw_count'] = df['is_target'].rolling(window=window_epochs, center=True, min_periods=1).sum()
+    
+    # Density: propensity as fraction (0-1), equivalent to REM time fraction in window
+    # For multi-channel, could divide by channels, but your REM detection uses F7/F8 effectively as one
+    df['density'] = df['raw_count'] / window_epochs
+    
+    # Time array: minutes since start
+    times_min = np.arange(num_epochs) * epoch_min
+    df['time_min'] = times_min
+    
+    # Mean density for reference line
+    mean_density = df['density'].mean()
+    
+    # Find peak density
+    peak_idx = df['density'].idxmax()
+    peak_time_min = times_min[peak_idx]
+    peak_time = start_time + timedelta(minutes=peak_time_min)
+    
+    # Phase offset: time from SOL to peak in hours
+    phase_offset_min = peak_time_min - sol
+    phase_offset_hr = phase_offset_min / 60.0
+    
+    # Plot similar to your slow wave/spindle density plots
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    
+    # Upper plot: Density with shading and mean line
+    ax1.plot(times_min / 60, df['density'], color='blue', linewidth=1.5)
+    ax1.fill_between(times_min / 60, df['density'], color='lightblue', alpha=0.5)
+    ax1.axhline(mean_density, color='red', linestyle='--', label=f'Mean: {mean_density:.2f}')
+    ax1.set_ylabel('REM Density (fraction/channel)')
+    ax1.set_title(f'Rolling {window_min}-Minute REM Propensity Over Time\nPeak at {peak_time.strftime("%H:%M")} (Offset: {phase_offset_hr:.1f}h from SOL), REM Latency: {(lat_rem/60):.1f}h')
+    ax1.legend()
+    ax1.grid(True)
+    
+    # Lower plot: Raw count
+    ax2.plot(times_min / 60, df['raw_count'], color='red', linewidth=1.5)
+    ax2.set_ylabel('Raw REM Count (per 10-min window)')
+    ax2.set_xlabel('Time (hours since start)')
+    ax2.grid(True)
+    
+    # Vertical line at peak
+    ax1.axvline(peak_time_min / 60, color='green', linestyle='--')
+    ax2.axvline(peak_time_min / 60, color='green', linestyle='--')
+    ax1.axvline(lat_rem / 60, color='cyan', linestyle='--')
+    ax2.axvline(lat_rem / 60, color='cyan', linestyle='--')
+    
+    plt.tight_layout()
+    
+    return phase_offset_hr, peak_time, fig
+
+def compute_cumulative_rem_phase(hypno, start_time, epoch_sec=30, smooth_window=15, min_slope_threshold=0.5, sol=0):
+    """
+    Compute rolling REM propensity (density) over time from YASA hypnogram data.
+    This estimates circadian phase offset by finding the peak REM density time relative to sleep onset latency (SOL).
+    
+    Parameters:
+    - hypno: numpy array of sleep stages (e.g., from YASA: 0=Wake, 1=N1, 2=N2, 3=N3, 4=REM)
+    - start_time_str: string of recording start time in 'HH:MM' or 'YYYY-MM-DD HH:MM:SS' format
+    - epoch_sec: seconds per epoch (default 30)
+    - smooth_window: window size for Savitzky-Golay smoothing (in epochs, default 15 ~7.5 min)
+    - min_slope_threshold: fraction of max slope for inflection (default 0.5)
+    
+    Returns:
+    - phase_offset_hr: float, time from SOL to peak REM density in hours (circadian phase marker)
+    - peak_time: datetime, absolute clock time of peak
+    - sol_time: datetime, absolute clock time of SOL
+    - fig: matplotlib figure for visualization (similar to your density plots)
+    """
+    
+    # hypno = session['hypnos_adj']
+    # epoch_sec = 1/sf_hypno
+    # start_time = session['dts']
+    # sol = session['sleep_stats']['SOL_ADJ']
+    
+    epoch_min = epoch_sec / 60.0
+    num_epochs = len(hypno)
+        
+    # Cumulative REM duration (minutes)
+    is_rem = (hypno == 4).astype(int)  # REM = 4
+    cum_rem = np.cumsum(is_rem) * epoch_min
+    
+    # Time array in minutes since start
+    times_min = np.arange(num_epochs) * epoch_min
+    
+    # Smooth the cumulative REM curve (Savitzky-Golay filter for better trend)
+    from scipy.signal import savgol_filter  # For better smoothing
+    cum_rem_smooth = savgol_filter(cum_rem, window_length=smooth_window, polyorder=2)
+    
+    # Compute first derivative (rate of change)
+    deriv1 = np.gradient(cum_rem_smooth)
+    
+    # Find the maximum slope
+    max_slope = np.max(deriv1)
+    threshold_slope = max_slope * min_slope_threshold
+    
+    # Inflection point: where slope exceeds threshold after initial rise
+    # Start search after first REM to avoid early noise
+    first_rem_idx = np.where(is_rem == 1)[0][0]
+    relevant_deriv = deriv1[first_rem_idx:]
+    relevant_times = times_min[first_rem_idx:]
+    inflection_idx = first_rem_idx + np.where(relevant_deriv >= threshold_slope)[0][0] if len(np.where(relevant_deriv >= threshold_slope)[0]) > 0 else first_rem_idx
+    
+    inflection_time_min = times_min[inflection_idx]
+    inflection_time = start_time + timedelta(minutes=inflection_time_min)
+    phase_offset_min = inflection_time_min - sol
+    phase_offset_hr = phase_offset_min / 60.0
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(times_min / 60, cum_rem, color='blue', label='Cumulative REM (min)', alpha=0.3)
+    ax.plot(times_min / 60, cum_rem_smooth, color='blue', label='Smoothed Cumulative REM', linewidth=2)
+    ax.plot(times_min[inflection_idx] / 60, cum_rem_smooth[inflection_idx], 'ro', label='Inflection Point')
+    ax.axvline(sol / 60, color='green', linestyle='--', label=f'SOL {sol}m')
+    ax.set_xlabel('Time (hours since start)')
+    ax.set_ylabel('Cumulative REM Duration (minutes)')
+    ax.set_title(f'Cumulative REM Over Time\nInflection at {inflection_time.strftime("%H:%M")} (Offset: {phase_offset_hr:.1f}h from SOL)')
+    ax.legend()
+    ax.grid(True)
+    
+    return phase_offset_hr, inflection_time, fig

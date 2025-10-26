@@ -68,7 +68,7 @@ with open(cfg_file, "r") as yamlfile:
 # format sd card on mac with terminal command:
 # find disk number in dev with 'diskutil list'
 # sudo diskutil zeroDisk /dev/disk4
-# sudo diskutil eraseDisk FAT32 OBCI MBRFormat /dev/disk4
+# sudo diskutil eraseDisk FAT32 OBCI MBRFormat /dev/disk6
 # sudo diskutil mountDisk /dev/disk4
 # diskutil list:
 #    /dev/disk4 (internal, physical):

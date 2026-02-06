@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for headless operation
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.dates as mdates
@@ -25,7 +27,7 @@ with open(cfg_file, "r") as yamlfile:
     cfg = cfg_base['default']
 
 # git pull https://github.com/preraulab/multitaper_toolbox/
-os.chdir(cfg['multitaper_dir'])
+sys.path.insert(0, cfg['multitaper_dir'])
 from multitaper_spectrogram_python import multitaper_spectrogram, nanpow2db
 
 # import custom sleep functions
@@ -48,13 +50,13 @@ user = cfg['user']
 sleeps = cfg_base['sleeps']
 if debug:
     sleeps = {
-        1: sleeps[1], 
-        2: sleeps[2], 
-        3: sleeps[3], 
-        4: sleeps[4], 
-        5: sleeps[5], 
-        6: sleeps[6],
-        7: sleeps[7],
+        1: sleeps[6], 
+#        2: sleeps[2], 
+#        3: sleeps[3], 
+#        4: sleeps[4], 
+#        5: sleeps[5], 
+#        6: sleeps[6],
+#        7: sleeps[7],
               } 
     # uncomment and choose specific sleep file, by default all files will be processed.
 settings = cfg_base['settings']
@@ -260,10 +262,10 @@ if 'Hypno' in plots:
         fig, axes = plt.subplots(round(len(session['eeg']))+2, 
                   figsize=(8, 4+len(session['eeg'])*2))
         fig.suptitle(f"{session['dts'].strftime(cfg['plot_dt_format'])} Hypnograms, {spect_specs}")
-        hyp = yasa.hypno_int_to_str(session['hypnos_max']); hyp_stats = sleep_stats(hyp)
+        hyp = list(yasa.hypno_int_to_str(session['hypnos_max'])); hyp_stats = sleep_stats(hyp)
         ax = plot_hypnogram(yasa.Hypnogram(hyp, start=pd.to_datetime(session['dts'])), ax = axes[0])
         ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / (hyp_stats["SPT"] + hyp_stats["SOL_ADJ"])))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} (Max Probs)')
-        hyp = yasa.hypno_int_to_str(session['hypnos_adj']); hyp_stats = sleep_stats(hyp)
+        hyp = list(yasa.hypno_int_to_str(session['hypnos_adj'])); hyp_stats = sleep_stats(hyp)
         ax = plot_hypnogram(yasa.Hypnogram(hyp, start=pd.to_datetime(session['dts'])), ax = axes[1])
         ax.set_title(f'{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / (hyp_stats["SPT"] + hyp_stats["SOL_ADJ"])))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}\n{raw.info["meas_date"].strftime(cfg["plot_dt_format"])} (Adj Probs)')
         for ch_index, ch in enumerate(session['eeg']):
@@ -276,7 +278,7 @@ if 'Hypno' in plots:
         if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
         plt.plot(session['hypnos_max'])
         fig, ax = plt.subplots(figsize=(7.5, 3))
-        hyp = yasa.hypno_int_to_str(session['hypnos_adj']); hyp_stats = sleep_stats(hyp)
+        hyp = list(yasa.hypno_int_to_str(session['hypnos_adj'])); hyp_stats = sleep_stats(hyp)
         ax = plot_hypnogram(yasa.Hypnogram(hyp, start=pd.to_datetime(session['dts'])), ax = ax, hl_lw=5)
         ax.set_title(f'{session["dts"].strftime(cfg["plot_dt_format"])} Hypno Adj Probs\n{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / (hyp_stats["SPT"] + hyp_stats["SOL_ADJ"])))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}')
         plt.tight_layout(rect=[0, 0, 1, 0.99])
@@ -293,7 +295,7 @@ if 'Cycles' in plots:
         rem_prosp_diff = (rem_prosp_time - phase_time).total_seconds()/60
         
         fig, ax = plt.subplots(figsize=(7.5, 3))
-        hyp = yasa.hypno_int_to_str(hypno); hyp_stats = sleep_stats(hyp)
+        hyp = list(yasa.hypno_int_to_str(hypno)); hyp_stats = sleep_stats(hyp)
         ax = plot_hypnogram(yasa.Hypnogram(hyp, start=pd.to_datetime(session['dts'])), ax = ax, hl_lw=5, cycles=cycles, vline_dt=rem_prosp_time)
         ax.set_title(f'{session["dts"].strftime(cfg["plot_dt_format"])} Cycles Smooth Adj Probs\n{m2h(hyp_stats["TST"])} ({round(100 * (hyp_stats["TST_ADJ"] / (hyp_stats["SPT"] + hyp_stats["SOL_ADJ"])))}%), SOL {m2h(hyp_stats["SOL_ADJ"])}, WASO {m2h(hyp_stats["WASO_ADJ"])}\nN3 {m2h(hyp_stats["N3"])}, R {m2h(hyp_stats["REM"])}, Awk {hyp_stats["N_AWAKE"]}, Phase {m2h(rem_prosp_diff)}')
         plt.tight_layout(rect=[0, 0, 1, 0.99])
@@ -421,3 +423,4 @@ if 'Radar' in plots:
             fig = plot_radar(session['dts'], session['sleep_stats'], session['ecg_stats'], session['acc'], cfg, n3_goal = 90, rem_goal = 105, awk_goal = 30, hr_goal = 45, hrv_goal = 35, mh_goal = 4.3)
             png_file = f"{session['dts'].strftime(cfg['file_dt_format'])} Radar {user}.png"; png_filename = os.path.join(cfg['image_dir'], png_file)    
             if not os.path.isfile(png_filename) or image_overwrite: fig.savefig(png_filename)
+

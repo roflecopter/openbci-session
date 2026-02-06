@@ -1,16 +1,98 @@
-numpy
-pyedflib
-sqlite3
-pandas
-pyOpenBCI
-contextlib
-json
-scipy
-seaborn
-importlib
-matplotlib
-mpl_toolkits
-autoreject
-yasa
-mne
-yaml
+# OpenBCI Sleep Analysis Requirements
+# Python 3.11 required (tested with 3.11.14)
+#
+# Install with: pip install -r requirements.txt
+# Then install qskit: pip install -e ~/Storage/Dev/qskit
+#   (or from GitHub: pip install git+https://github.com/roflecopter/qskit.git)
+#
+# Note: pycwt may show a numpy version warning - this is expected and can be ignored.
+#       numpy must stay <2.0 for vital_sqi compatibility.
+
+# Core scientific stack (numpy must be <2.0 for vital_sqi compatibility)
+numpy==1.26.4
+pandas==3.0.0
+scipy==1.17.0
+matplotlib==3.10.8
+seaborn==0.13.2
+
+# EEG/Sleep analysis
+mne==1.11.0
+yasa==0.6.5
+autoreject==0.4.3
+pyEDFlib==0.1.42
+antropy==0.1.9
+sleepecg==0.5.9
+tensorpac==0.6.5
+pyriemann==0.10
+lspopt==1.4.0
+
+# HRV analysis dependencies (qskit installed separately)
+neurokit2==0.2.12
+hrv-analysis==1.0.5
+vital-sqi==0.1.0
+heartpy==1.2.7
+nolds==0.5.2
+py-ecg-detectors==1.3.5
+
+# Machine learning
+scikit-learn==1.8.0
+lightgbm==4.6.0
+numba==0.63.1
+llvmlite==0.46.0
+
+# Spectrogram and signal processing
+colorcet==3.1.0
+librosa==0.11.0
+PyWavelets==1.9.0
+soundfile==0.13.1
+soxr==1.0.0
+
+# Data formats and I/O
+PyYAML==6.0.3
+pyarrow==23.0.0
+h5py==3.15.1
+h5io==0.2.5
+pymatreader==1.1.0
+openpyxl==3.1.5
+wfdb==4.3.1
+
+# Database
+mysql-connector-python==9.6.0
+
+# Visualization
+plotly==6.5.2
+ipywidgets==8.1.8
+
+# Statistics
+statsmodels==0.14.6
+pmdarima==2.1.1
+
+# Utilities
+joblib==1.5.3
+tqdm==4.67.3
+requests==2.32.5
+python-dateutil==2.9.0.post0
+pytz==2025.2
+typing_extensions==4.15.0
+
+# Additional dependencies (auto-installed but pinned for reproducibility)
+Cython==3.2.4
+pillow==12.1.0
+contourpy==1.3.3
+fonttools==4.61.1
+kiwisolver==1.4.9
+cycler==0.12.1
+pyparsing==3.3.2
+decorator==5.2.1
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+pooch==1.9.0
+lazy_loader==0.4
+packaging==26.0
+six==1.17.0
+threadpoolctl==3.6.0
+certifi==2026.1.4
+charset-normalizer==3.4.4
+idna==3.11
+urllib3==2.6.3
+aiohttp==3.13.3

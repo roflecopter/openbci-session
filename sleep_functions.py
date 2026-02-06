@@ -32,6 +32,8 @@ def m2h(mins):
         return f"{round(mins)}m"
 
 def sleep_stats(hypno, hypno_sf = 1/30):
+    # convert to numpy array if needed (for pandas ArrowStringArray compatibility)
+    hypno = np.asarray(hypno)
     # calc sleep onset latency
     sol = 0; stop = False; epoch_time = 1 / hypno_sf
     major_awakenings_n = 0; awake_window_mins = 20; min_awake_rate = .5
@@ -611,7 +613,7 @@ def acc_process(raw, acc, dts):
     acc_df.set_index('dt', inplace=True)
     
     # aggregate by 10s
-    acc_agg = acc_df.resample('10S').mean()
+    acc_agg = acc_df.resample('10s').mean()
     acc_agg = acc_agg.reset_index()
 
     # calc diff

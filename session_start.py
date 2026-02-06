@@ -1,4 +1,4 @@
-#!/Users/bob/anaconda3/envs/env-311/bin/python3.11
+#!/home/lst/Storage/Dev/openbci-session/venv/bin/python3.11
 import datetime 
 import json
 import os
@@ -169,7 +169,7 @@ res = board.ser.read_all().decode()
 if dbg: print(res)
 if len(re.findall('Sample rate is ' + str(sampling_rate) + 'Hz', res)) > 0:
      print(f'sampling rate set to {sampling_rate}')
- else:
+else:
      sys.exit(f'sampling rate not set')
 
 # channel configuration

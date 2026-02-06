@@ -95,6 +95,8 @@ device = activities[activity_chosen]['dev']
 ch_n = 8 if device == 'cyton' else 16
 channels = montages[activities[activity_chosen]['ch']];
 emg_channels = montages[activities[activity_chosen]['emg']];
+if emg_channels is None:
+    emg_channels = {}
 electrode_type = electrodes[activities[activity_chosen]['electrode']];
 duration = activities[activity_chosen]['dur'];
 ground = activities[activity_chosen]['ground'];
@@ -166,9 +168,9 @@ time.sleep(t_sleep)
 res = board.ser.read_all().decode()
 if dbg: print(res)
 if len(re.findall('Sample rate is ' + str(sampling_rate) + 'Hz', res)) > 0:
-    print(f'sampling rate set to {sampling_rate}')
-else:
-    sys.exit(f'sampling rate not set')
+     print(f'sampling rate set to {sampling_rate}')
+ else:
+     sys.exit(f'sampling rate not set')
 
 # channel configuration
 gains = {1:0,2:1,4:2,6:3,8:4,12:5,24:6}

@@ -4,11 +4,20 @@ import json
 import os
 import pyOpenBCI
 import re
+import serial.tools.list_ports
 import sqlite3
 import sys
 import time
 import yaml
 from contextlib import closing
+
+
+def find_openbci_port():
+    """Find OpenBCI dongle (FTDI FT231X, VID:0x0403 PID:0x6015) serial port."""
+    for p in serial.tools.list_ports.comports():
+        if p.vid == 0x0403 and p.pid == 0x6015:
+            return p.device
+    return None
 
 # config, if relative path not working then use explicit path to working dir (repo dir with scripts and yml) or modify working directory in IDE/GUI settings
 # working_dir = '/path/to/openbci-session'
@@ -112,7 +121,9 @@ print(f'{channels}, ground: {ground}, emg: {emg_channels}')
 
 t_sleep = 2
 dbg = False
-board = pyOpenBCI.OpenBCICyton(port=cfg['port'], daisy=False)
+port = find_openbci_port() or cfg['port']
+print(f'Port: {port}')
+board = pyOpenBCI.OpenBCICyton(port=port, daisy=False)
 time.sleep(t_sleep)
 res = board.ser.read_all().decode()
 

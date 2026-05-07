@@ -1,11 +1,12 @@
 #!/home/lst/Storage/Dev/openbci-session/venv/bin/python3.11
-import datetime 
+import datetime
 import json
 import os
 import pyOpenBCI
 import re
 import serial.tools.list_ports
 import sqlite3
+import struct
 import sys
 import time
 import yaml
@@ -119,13 +120,50 @@ print(f'{channels}, ground: {ground}, emg: {emg_channels}')
 # format sd card on mac with terminal command:
 # sudo diskutil eraseDisk FAT32 OBCI MBRFormat /dev/disk6
 
-t_sleep = 2
+t_sleep = 0.5
 dbg = False
 port = find_openbci_port() or cfg['port']
 print(f'Port: {port}')
 board = pyOpenBCI.OpenBCICyton(port=port, daisy=False)
-time.sleep(t_sleep)
+time.sleep(1.5)  # one-time post-port-open settle for dongle RFduino startup banner
 res = board.ser.read_all().decode()
+
+def drain_serial(quiet=0.05, max_total=0.5):
+    """Drain the serial buffer until it stays quiet for `quiet` seconds (default 50ms)
+    or `max_total` elapses. Prevents leftover $$$ from a prior response satisfying
+    the next wait_for_response() call early."""
+    deadline_total = time.time() + max_total
+    deadline_quiet = time.time() + quiet
+    while time.time() < deadline_total:
+        chunk = board.ser.read_all()
+        if chunk:
+            deadline_quiet = time.time() + quiet  # reset quiet-window
+        elif time.time() >= deadline_quiet:
+            return
+        time.sleep(0.01)
+
+def send_cmd(cmd):
+    """Drain stale buffer, then send command (str). Use this for protocol commands
+    where wait_for_response() will follow."""
+    drain_serial()
+    board.write_command(cmd)
+
+def wait_for_response(end_marker='$$$', timeout=5.0, poll=0.02, settle=0.05):
+    """Poll the serial buffer until end_marker is seen or timeout elapses.
+    Returns whatever was accumulated, decoded. Replaces sleep+read_all with a
+    bounded wait that returns as soon as the firmware finishes its response."""
+    accumulated = b''
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        chunk = board.ser.read_all()
+        if chunk:
+            accumulated += chunk
+            if end_marker.encode() in accumulated:
+                time.sleep(settle)
+                accumulated += board.ser.read_all()
+                return accumulated.decode(errors='ignore')
+        time.sleep(poll)
+    return accumulated.decode(errors='ignore')
 
 if dbg:
     board.write_command('?')
@@ -139,11 +177,10 @@ def print_raw(sample):
 # command list is here https://docs.openbci.com/Cyton/CytonSDK/
 # check if board in default mode
 
-board.write_command('//')
-time.sleep(t_sleep)
-res = board.ser.read_all().decode()
-if dbg: print(res)
-if res == 'Success: default$$$':
+send_cmd('//')
+res = wait_for_response(timeout=2.0)
+if dbg: print(repr(res))
+if 'Success: default' in res:
     print(f'mode is default')
 else:
     sys.exit(f'mode is not default')
@@ -174,9 +211,8 @@ else:
 
 # set sampling rate
 sampling_rates = {16000:0,8000:1,4000:2,2000:3,1000:4,500:5,250:6}
-board.write_command('~' + str(sampling_rates[sampling_rate]))
-time.sleep(t_sleep)
-res = board.ser.read_all().decode()
+send_cmd('~' + str(sampling_rates[sampling_rate]))
+res = wait_for_response(timeout=2.0)
 if dbg: print(res)
 if len(re.findall('Sample rate is ' + str(sampling_rate) + 'Hz', res)) > 0:
      print(f'sampling rate set to {sampling_rate}')
@@ -199,9 +235,8 @@ if len(chs) == 16:
         'xU' + chs[14] + 'xI' + chs[15])
     
 print(ch_cmd)
-board.write_command(ch_cmd)
-time.sleep(t_sleep*5)
-res = board.ser.read_all().decode()
+send_cmd(ch_cmd)
+res = wait_for_response(timeout=5.0)
 if dbg: print(res)
 if (len(re.findall('Success', res)) > 0):
     channels.update(emg_channels)
@@ -218,15 +253,11 @@ if dbg:
 
 # enable sdcard writing
 durations = {'5M':'A','15M':'S','30M':'F','1H':'G','2H':'H','4H':'J','12H':'K','24H':'L'}
-board.write_command(durations[duration])
-time.sleep(t_sleep * 10)
-
-res = board.ser.read_all().decode()
+send_cmd(durations[duration])
+# SD pre-erase + allocation: ms for 5M, ~6-25 s for 12H/24H (depends on SD card speed).
+# Generous timeout — wait_for_response returns as soon as the $$$ EOT arrives.
+res = wait_for_response(timeout=60.0)
 print(res)
-time.sleep(t_sleep * 5)
-res2 = board.ser.read_all().decode()
-print(res2)
-res = res + res2
 
 match = re.search(r' \d+ ', res)
 if match is not None:
@@ -234,7 +265,9 @@ if match is not None:
     if(len(matched) > 0):
         blocks = int(re.sub(" ","", matched))
         BLOCK_5MIN = 16890
-        sd_duration = (blocks * 250 / sampling_rate) / (BLOCK_5MIN / 5)
+        # firmware auto-picks BLOCK_DIV=2 for Cyton-only (daisy absent), =1 for daisy
+        block_div = 1 if device == 'daisy' else 2
+        sd_duration = (blocks * 250 / sampling_rate) * block_div / (BLOCK_5MIN / 5)
         print(f'SD blocks: {blocks} and max duration: {round(sd_duration)} minutes', )
         if duration in ['1H','2H','4H','12H','24H']:
             if f'{round(sd_duration / 60)}H' != duration:
@@ -250,26 +283,58 @@ if len(re.findall('correct', res)) > 0:
         print(f'SD file init success {re_file}')
         sd_file = re_file
         # board.start_stream(print_raw)
-        board.write_command('~~')
-        time.sleep(t_sleep)
-        res = board.ser.read_all().decode()
-        print(res)
-        board.write_command('b')
+        send_cmd('~~')
+        res = wait_for_response(timeout=0.5)
+        if dbg: print(res)
+        # Build settings + send META line via firmware 'M' protocol BEFORE 'b'
+        # so the line lands at the start of the SD TXT file (self-describing).
         dts = datetime.datetime.now()
+        settings = {
+            'gain':gain, 'channels':channels, 'sf': sampling_rate,
+            'ground': ground, 'electrode': electrode_type, 'emg_ch': emg_channels,
+            'ch_n': ch_n, 'activity': activity, 'device': device, 'note': note}
+        json_settings = json.dumps(settings)
+        meta_obj = {'dts': dts.strftime(cfg["sql_dt_format"]), 'file': sd_file}
+        meta_obj.update(settings)
+        meta_payload = ('%META ' + json.dumps(meta_obj) + '\n').encode('utf-8')
+        # defense-in-depth: payload must be single-line ASCII (json.dumps with default
+        # ensure_ascii=True guarantees this; the asserts catch a future regression).
+        assert b'\n' not in meta_payload[:-1], 'meta payload has embedded newline'
+        assert b'\x00' not in meta_payload, 'meta payload has NUL byte'
+        if len(meta_payload) <= 1024:
+            expected_sum = sum(meta_payload) & 0xFFFF
+            verified = False
+            ack = ''
+            for attempt in range(2):
+                drain_serial()  # clear stale buffer (incl. any prior META ERR)
+                board.ser.write(b'M' + struct.pack('<H', len(meta_payload)) + meta_payload)
+                ack = wait_for_response(timeout=2.0)
+                m = re.search(r'META OK (\d+) (\d+)', ack)
+                if m and int(m.group(1)) == len(meta_payload) and int(m.group(2)) == expected_sum:
+                    print(f'meta verified: {len(meta_payload)} bytes, sum {expected_sum}'
+                          + (f' (retry {attempt})' if attempt else ''))
+                    verified = True
+                    break
+                if attempt == 0:
+                    time.sleep(1.1)  # firmware META timeout (1s) + margin → drop any stuck state
+            if not verified:
+                m = re.search(r'META OK (\d+) (\d+)', ack)
+                if m:
+                    print(f'WARNING: meta mismatch after retry — expected len={len(meta_payload)} sum={expected_sum}, firmware reported len={m.group(1)} sum={m.group(2)}. Continuing without verified meta.')
+                else:
+                    print(f'WARNING: meta not confirmed after retry. response: {ack!r}. Continuing without verified meta.')
+        else:
+            print(f'meta payload {len(meta_payload)}B exceeds 1024 cap, skipped')
+        send_cmd('b')
         print(f'Session started at {dts}')
-        time.sleep(t_sleep)
+        time.sleep(0.2)  # brief settle so stream actually begins before we close serial
         with closing(sqlite3.connect(os.path.join(cfg['session_dir'],cfg['session_file']), timeout=10)) as con:
             with con:
                 with closing(con.cursor()) as cur:
                     sql = 'CREATE TABLE IF NOT EXISTS Sessions(dts datetime NOT NULL PRIMARY KEY, file VARCHAR(256), settings TEXT NOT NULL)'
                     cur.execute(sql)
-                    settings = {
-                        'gain':gain, 'channels':channels, 'sf': sampling_rate, 
-                        'ground': ground, 'electrode': electrode_type, 'emg_ch': emg_channels,
-                        'ch_n': ch_n, 'activity': activity, 'device': device, 'note': note}
-                    json_settings = json.dumps(settings)
                     sql = 'REPLACE INTO Sessions (dts,file,settings) VALUES (\'' + dts.strftime(cfg["sql_dt_format"]) + '\', \'' + sd_file + '\', \'' + json_settings + '\')'
-                    cur.execute(sql)            
+                    cur.execute(sql)
     else:
         print(res)
         sys.exit(f'SD file not found. Please restart board, dongle & check sd card')

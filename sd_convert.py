@@ -130,12 +130,15 @@ def process_file(file_path, n_ch = 8, n_acc = 3, sf = 250, verbose=False):
         stops_at = []
         while True:
             line = file.readline()
-            if (i == 0) and (len(line) > 30):
+            if (i == 0) and (len(line) > 30) and not line.startswith('%'):
                 print(f'File seems to be corrupted, line len {len(line)}')
                 break  # End of file
             if not line:
                 print(f'EOF, no line at {i}')
                 break  # End of file
+            if line.startswith('%META '):  # firmware-embedded metadata, skip from data path
+                i += 1
+                continue
             split_line = line.strip().split(',')
             if split_line[0].startswith('%Total time'):
                 print(f'recording full at {i} / {line}')
@@ -144,7 +147,7 @@ def process_file(file_path, n_ch = 8, n_acc = 3, sf = 250, verbose=False):
                 stops_n += 1
                 stops.append(i)
             elif len(split_line) == 1 and not split_line[0].startswith('%'):
-                if stops[-1] == i - 1:
+                if stops and stops[-1] == i - 1:
                     print(f'stopped at {i} / {line}')
                     stops_at.append(interpret24bitAsInt32('00' + line))
             elif (len(split_line) > 3) and (len(split_line) <= n_ch + n_acc + 1):
@@ -206,39 +209,86 @@ def obci_bdf(bci_signals, sf, channels, user, gender, dts, birthday, gain, elect
         processed = len(channel_data)
     return([header, signal_headers, signals, processed])
 
-def session_lookup(file, sessions=None, defaults=None):
+def read_txt_meta(file_path, max_bytes=4096):
+    """Scan the first max_bytes of TXT for the firmware-embedded %META {...} JSON line.
+    Returns dict or None. Cheap (single bounded read), tolerant of any number of
+    leading %-prefixed control lines, robust against partial-block-write artefacts:
+    if multiple %META candidates exist, returns the first one that parses as JSON
+    (so a corrupted partial fragment doesn't shadow a clean retry attempt)."""
+    try:
+        with open(file_path, 'rb') as f:
+            head = f.read(max_bytes)
+    except (IOError, OSError):
+        return None
+    head_str = head.decode('utf-8', errors='ignore')
+    metas = re.findall(r'^%META (.+)$', head_str, re.MULTILINE)
+    if not metas:
+        return None
+    if len(metas) > 1:
+        print(f'WARNING: {len(metas)} %META candidates in {file_path}, picking first valid JSON')
+    for meta_str in metas:
+        try:
+            return json.loads(meta_str.strip())
+        except json.JSONDecodeError:
+            continue
+    return None
+
+def session_lookup(file, sessions=None, defaults=None, file_path=None):
     electrode_type = 'Gold Cup OpenBCI, Ten20'
     activity = 'sleep'
     ch_n = 8
     dts = datetime.datetime.now()
     if defaults is None:
         channels = {
-            'F8-T5':0, 'F7-T5':1, 'O2-T5':2, 'O1-T5':3, 
+            'F8-T5':0, 'F7-T5':1, 'O2-T5':2, 'O1-T5':3,
             'T8-T5':4, 'T7-T5':5, 'AFz-T5':6, 'T6-T5':7}
         emg_channels = {}
         sf = 500
         device = 'cyton'
         ground = 'Fpz'
         settings = {
-            'gain':24, 'channels':channels, 'sf': sf, 
-            'ground': ground, 'electrode': electrode_type, 
+            'gain':24, 'channels':channels, 'sf': sf,
+            'ground': ground, 'electrode': electrode_type,
             'emg_ch': emg_channels,
             'ch_n': ch_n, 'activity': activity, 'device': device
             }
-    else: 
+    else:
         settings = defaults
-    
-    session_file = sessions.loc[sessions['file'] == file]
-    if len(session_file) > 0:
-        session = session_file.loc[session_file['dt'].idxmax()]
-        settings = json.loads(session['settings'])
-        if 'electrode' not in settings:
-            settings['electrode'] = electrode_type
-        if 'activity' not in settings:
-            settings['activity'] = activity
-        if 'ch_n' not in settings:
-            settings['ch_n'] = ch_n
-        dts = datetime.datetime.strptime(session['dts'], cfg['sql_dt_format'])
+
+    # Priority 1 — firmware-embedded %META line in the TXT itself
+    if file_path is not None:
+        meta = read_txt_meta(file_path)
+        if meta is not None:
+            print(f'using %META line from {file}')
+            for k in ('gain', 'channels', 'sf', 'ground', 'electrode',
+                      'emg_ch', 'ch_n', 'activity', 'device'):
+                if k in meta:
+                    settings[k] = meta[k]
+            if 'dts' in meta:
+                try:
+                    dts = datetime.datetime.strptime(meta['dts'], cfg['sql_dt_format'])
+                except (ValueError, TypeError):
+                    pass
+            return dts, settings
+
+    # Priority 2 — sqlite Sessions row (legacy fallback for pre-firmware-patch recordings)
+    if sessions is not None:
+        session_file = sessions.loc[sessions['file'] == file]
+        if len(session_file) > 0:
+            session = session_file.loc[session_file['dt'].idxmax()]
+            settings = json.loads(session['settings'])
+            if 'electrode' not in settings:
+                settings['electrode'] = electrode_type
+            if 'activity' not in settings:
+                settings['activity'] = activity
+            if 'ch_n' not in settings:
+                settings['ch_n'] = ch_n
+            dts = datetime.datetime.strptime(session['dts'], cfg['sql_dt_format'])
+            print(f'using sqlite Sessions row for {file}')
+            return dts, settings
+
+    # Priority 3 — defaults
+    print(f'using defaults for {file}')
     return dts, settings
         
 def get_sessions(session_db):
@@ -263,7 +313,7 @@ if files:
     print(f'Process {file_name}')
     file_path = os.path.join(cfg['sd_dir'], file_name)
     print(f'converting: {file_name}')
-    dts, settings = session_lookup(file_name, sessions)
+    dts, settings = session_lookup(file_name, sessions, file_path=file_path)
     print(f'dt: {dts}, settings: {settings}')
     settings['channels']['ACC_X'] = settings['ch_n']
     settings['channels']['ACC_Y'] = settings['ch_n'] + 1

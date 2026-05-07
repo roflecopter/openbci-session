@@ -81,6 +81,7 @@ Each script comes with config file which is name as script but with yml extensio
 Script to start OpenBCI session in a single click, usually for sleep EEG acquisiton purposes. 
 * Used to start session with data saved on sd with desired sampling frequency (for greater than 250Hz modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) need to be flashed, otherwise it will always write with default 250Hz).
 * Saves session start timestamp and settings into sqlite file (session_dir/sessions.db). Session info will be used in sd_convert.py script
+* Also embeds the same settings as a `%META` line at the start of the SD TXT file (see "Firmware-embedded %META" below) so each recording is self-describing — the sqlite row becomes a fallback rather than the only source of truth.
 * Config: setup port, session_dir, montages, electrode descriptions, activities list and current activity
 * Montages: here you list possible montages you want to use
 * Electrodes: here you list possible electrode types
@@ -88,11 +89,50 @@ Script to start OpenBCI session in a single click, usually for sleep EEG acquisi
 * Activity: set key from activities section to choose prefered activity
 * sample yml file already contains simple montage I use daily, you rename it and modify it for your purposes
 
+## Bounded-wait helpers (faster startup)
+The script previously used fixed `time.sleep` between every protocol command, which conservatively summed to ~50s of idle time on each run. It now uses three small helpers around `board.ser`:
+* `drain_serial(quiet=0.05, max_total=0.5)` — polls the serial buffer until it stays quiet for `quiet` seconds (or `max_total` elapses). Called before each command to clear any stale `$$$` (EOT) bytes from a prior response that would otherwise satisfy the next wait early.
+* `send_cmd(cmd)` — drains, then writes the command. Use whenever a `wait_for_response` will follow.
+* `wait_for_response(end_marker='$$$', timeout=N, poll=0.02, settle=0.05)` — polls until the firmware's `$$$` end-of-transmission marker arrives or `timeout` elapses, then sleeps `settle` seconds and reads any trailing bytes. Returns as soon as the firmware actually finishes — no over-conservative waits.
+
+End-to-end this typically cuts session start to ~15s. The 12H-slot SD allocation step uses `timeout=60.0` because pre-erase on slow SD cards can take 6–25s.
+
 # sd_convert.py
 Script to convert OpenBCI SD card .TXT files to 
 * 24-bit BDF with calibrated values. Accelerometer data is upsampled to match ADS sampling rate.
-* Recording timestamp and settings taken from sqlite db which automatically created and updated by session_start.py script
+* Recording timestamp and settings resolved in priority order (see "Firmware-embedded %META"): (1) `%META` line in the TXT itself, (2) sqlite `Sessions` row written by session_start.py, (3) defaults.
 * Config: setup sd_dir (openbci sd card mountpoint, e.g. /Volumes/OBCI for mac), data_dir (for output files) and session_dir (must be equal to session_start.yml) and basic user data
+
+# Firmware-embedded `%META` line (modded firmware required)
+Recordings made with the modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) carry their own settings inside the SD TXT. session_start.py builds the JSON, sends it via the firmware's `M`-prefixed raw-write protocol (`'M' <lenLo> <lenHi> <up to 1024 payload bytes>`) BEFORE issuing `b` (start stream), and the firmware writes it to its own SD block (newline-padded) so it can never interleave with sample data. After the write, the firmware acks `META OK <len> <sum>` (16-bit byte sum) which session_start.py verifies against the payload it sent — on mismatch or `META FAIL` the host retries once and otherwise prints a warning and continues.
+
+Format on disk:
+```
+%META {"dts": "...", "file": "OBCI_XX.TXT", "gain": 24, "channels": {...}, "sf": 500, "ground": "...", "electrode": "...", "emg_ch": {...}, "ch_n": 8, "activity": "sleep", "device": "cyton", "note": null}
+<padding newlines to fill the SD block>
+%STOP AT
+<sample data>
+```
+
+`sd_convert.py:read_txt_meta()` scans the first 4096 bytes of the TXT for the `%META {...}` line, parses it as JSON, and returns settings from there. Multiple `%META` candidates (which would only happen on a partial-block-write artefact) are tolerated — the first one that parses as valid JSON wins. `process_file()` skips any `%META`-prefixed line so it's never confused for data.
+
+Benefit: SD card files become self-describing. You can re-process a TXT on any machine without copying the sqlite db across, and a swap of SD cards between sessions can no longer cross-tag the files.
+
+# BLOCK_DIV auto-detect
+The firmware's `BLOCK_DIV` controls how many SD blocks per second are pre-allocated; correct value is 1 for 16-channel daisy and 2 for 8-channel cyton-only. The modded firmware now auto-picks based on `board.daisyPresent` at SD setup time, so the requested duration label finally matches the actual recording length (e.g. 12H slot at 500 Hz cyton-only used to overshoot to ~24H of allocation; now sized correctly to ~12H = 1.24 GB). session_start.py mirrors the same calc when it reports back the SD's max duration. An explicit `c` / `C` host command from session_start still overrides via a `sdBlockDivManual` flag.
+
+# SD-error retry + `%E` markers (modded firmware)
+Documented OpenBCI 1-in-50 silent-empty-recording bug — the SD card occasionally fails one multi-block write mid-recording and the original firmware just kept going, sometimes losing the rest of the recording.
+
+The modded firmware now:
+* Retries the failed `card.writeData()` once via `writeStop` + `writeStart` from the same block.
+* On persistent failure, realigns the multi-block pointer to the NEXT block so subsequent writes target the right position. The failed block stays as pre-erased whitespace.
+* Writes a `%E` marker line into the next-good block so post-processing can locate the gap.
+* Counts `sdErrs` and `sdRetries` and emits them in the SD footer alongside the existing `%Over:`.
+* Drives the on-board LED into a fast `100ms ON / 300ms OFF` strobe on first SD error (visibly distinct from the normal SD-write blink).
+* If the failure happens during the `%META` payload, the host gets `META FAIL` instead of `META OK` and resends.
+
+`%E` markers are deferred while the firmware is mid-`%META` write so they can never fragment the JSON line.
 
 # session_analyse.py
 Script to analyses recorded sessions. Suited for short sessions (like meditations etc).

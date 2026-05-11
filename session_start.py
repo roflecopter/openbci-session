@@ -1,4 +1,5 @@
 #!/home/lst/Storage/Dev/openbci-session/venv/bin/python3.11
+import argparse
 import datetime
 import json
 import os
@@ -11,6 +12,16 @@ import sys
 import time
 import yaml
 from contextlib import closing
+
+
+# CLI override for `activity` so you don't have to edit session_start.yml to
+# switch between e.g. 16 (12H sleep) and 18 (5-min burn-in test). When --activity
+# is omitted, fall back to the yml's `activity:` key (current behavior).
+_ap = argparse.ArgumentParser(add_help=True)
+_ap.add_argument('--activity', '-a', type=int, default=None,
+                 help='Activity number from session_start.yml activities map '
+                      '(overrides yml-configured activity)')
+_args, _ = _ap.parse_known_args()
 
 
 def find_openbci_port():
@@ -97,7 +108,7 @@ with open(cfg_file, "r") as yamlfile:
 montages = cfg_base['montages']
 electrodes = cfg_base['electrodes']
 activities = cfg_base['activities']
-activity_chosen = cfg_base['activity'] # choose the montage you want to apply in config yml, add note if needed
+activity_chosen = _args.activity if _args.activity is not None else cfg_base['activity']  # CLI override > yml default
 
 # extract settings from chosen montage
 activity = activities[activity_chosen]['type'];
@@ -244,7 +255,7 @@ if (len(re.findall('Success', res)) > 0):
 else:
     sys.exit(f'channels not set')
 
-if dbg: 
+if dbg:
     board.write_command('?')
     time.sleep(t_sleep*3)
     new_registers = board.ser.read_all().decode()
@@ -253,6 +264,67 @@ if dbg:
 
 # enable sdcard writing
 durations = {'5M':'A','15M':'S','30M':'F','1H':'G','2H':'H','4H':'J','12H':'K','24H':'L'}
+
+# Write SESSION.TXT via the firmware 'P' protocol BEFORE opening the SD slot.
+# Contents = the exact byte stream the firmware would need to replay this
+# session after a silent halt: channel config, sample rate, board mode,
+# slot character, streaming start. NO META — the auto-resumed continuation
+# file's %BOOT chains back to this session's first OBCI file via prev=, and
+# the post-processor follows that to find the original %META.
+#
+# Order (must match firmware pre-scan in replaySessionFile):
+#   1. xNGSIBPnX channel-config commands (no ordering constraint among them
+#      themselves, but must precede 'b')
+#   2. ~N sample-rate (must precede slot, since setupSDcard's BLOCK_COUNT
+#      computation reads getSampleRate())
+#   3. /N board mode
+#   4. slot char (K/A/etc.) — opens new OBCI_*.TXT
+#   5. b — streamStart
+#
+# P is gated on !board.streaming in the firmware, so this MUST happen before
+# we send 'b'. We send it now (before the slot too) — the SD is still
+# uncontended (no recording file open), so the SESSION.TXT write is safe.
+#
+# 2026-05-11 — on by default after firmware fix landed (the dispatch-order
+# bug where 'P' bytes embedded in an M META payload were being hijacked by
+# sdPersistProcess was resolved by gating P state-0 entry on sdMetaState==0).
+# Set WR_SESSION_PERSIST=0 to disable the SESSION.TXT write if a regression
+# ever shows up — the underlying session will still record without it.
+if os.environ.get('WR_SESSION_PERSIST', '1') != '0':
+    session_txt_lines = [ch_cmd,
+                         '~' + str(sampling_rates[sampling_rate]),
+                         '/0',
+                         durations[duration],
+                         'b']
+    session_txt_payload = ('\n'.join(session_txt_lines) + '\n').encode('ascii')
+    if len(session_txt_payload) > 1024:
+        print(f'WARNING: SESSION.TXT payload {len(session_txt_payload)}B exceeds 1024-byte firmware cap; skipping auto-resume setup')
+    else:
+        expected_sum = sum(session_txt_payload) & 0xFFFF
+        persist_verified = False
+        p_ack = ''
+        for attempt in range(2):
+            drain_serial()
+            board.ser.write(b'P' + struct.pack('<H', len(session_txt_payload)) + session_txt_payload)
+            p_ack = wait_for_response(timeout=5.0)
+            m = re.search(r'PERSIST OK (\d+) (\d+)', p_ack)
+            if m and int(m.group(1)) == len(session_txt_payload) and int(m.group(2)) == expected_sum:
+                print(f'SESSION.TXT written: {len(session_txt_payload)} bytes, sum {expected_sum}'
+                      + (f' (retry {attempt})' if attempt else ''))
+                persist_verified = True
+                break
+            if attempt == 0:
+                time.sleep(1.1)  # firmware P state-machine timeout (1s) + margin
+        if not persist_verified:
+            # Don't sys.exit — auto-resume is a safety net, not a hard requirement.
+            # Continue without it; the session will still record fine, just without
+            # silent-halt recovery on next boot.
+            print(f'WARNING: SESSION.TXT not confirmed after retry. response: {p_ack!r}. '
+                  f'Continuing without auto-resume capability.')
+else:
+    print('SESSION.TXT auto-resume setup disabled (WR_SESSION_PERSIST != 1). '
+          'Recording will proceed normally; silent-halt recovery is not armed for this session.')
+
 send_cmd(durations[duration])
 # SD pre-erase + allocation: ms for 5M, ~6-25 s for 12H/24H (depends on SD card speed).
 # Generous timeout — wait_for_response returns as soon as the $$$ EOT arrives.
@@ -276,7 +348,11 @@ if match is not None:
             sys.exit(f'board init wrong duration for sd file: {duration} requested {round(sd_duration)}M returned')
 
 if dbg: print(res)
-if len(re.findall('correct', res)) > 0:
+# Detect successful SD slot open via the "Size N SD file OBCI_NN.TXT" line —
+# emitted by setupSDcard on success regardless of whether the card was already
+# initialised (the "Wiring and sdcard is correct." pre-roll only prints on
+# the very first card.init, which we may consume earlier in the P command).
+if len(re.findall('Size ', res)) > 0:
     re_file = re.findall(r'I\_.*\.T', res)
     if len(re_file) > 0:
         re_file = 'OBC' + re_file[0] + 'XT'

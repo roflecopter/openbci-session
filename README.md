@@ -146,6 +146,19 @@ The modded firmware uses a 5-tier recovery cascade (see firmware README):
 
 Full firmware design + per-tier semantics + tested card classes: see [`OpenBCI_Cyton_Library_SD/README.md`](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD).
 
+# sd_health.py — morning SD health check
+After a night of recording, a 1 MB write+verify probe runs on the SD card alongside BDF conversion, combined with the parsed `%CKPT` counters from last night's TXT, to produce a single per-morning verdict: `HEALTHY`, `DEGRADING`, or `DYING`. Persisted to `sessions.db` in a new `SdHealth` table so trends are visible (e.g. "p95 latency has crept from 80 ms → 240 ms over 30 nights → schedule replacement").
+
+Default-on in `sd_convert.py`'s main block (disable per-config with `sd_health: false`). Standalone CLI for ad-hoc checks:
+```bash
+python sd_health.py --sd-dir /run/media/lst/OBCI \
+  --txt /run/media/lst/OBCI/OBCI_01.TXT \
+  --session-db /path/to/sessions.db
+```
+Exit code mirrors the verdict (0/1/2) so a morning shell wrapper can branch on it. `--json` flag for machine-readable output. The probe file (`.sdhealth_probe_*.bin`) is always cleaned up; `--keep-probe` keeps it for forensic inspection.
+
+Verdict thresholds are conservative starting values surfaced as module-level constants in `sd_health.py`; calibrate against a few weeks of "known-healthy" runs on your card classes (Industrial 16 GB, Max Endurance 32 GB, etc.) before treating `DEGRADING` as actionable.
+
 # session_analyse.py
 Script to analyses recorded sessions. Suited for short sessions (like meditations etc).
 Periods (and other settings) are defined for each session in sessions variable inside script.

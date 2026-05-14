@@ -10,8 +10,11 @@ import sqlite3
 import yaml
 
 from contextlib import closing
-from pyedflib import highlevel
-from scipy.interpolate import interp1d, CubicSpline, PchipInterpolator, Akima1DInterpolator
+# pyedflib + scipy are heavy and only used by obci_bdf() and
+# sc_interp1d_nan(); the library functions parse_ckpt_line +
+# compute_intra_file_gaps don't need them. Lazy-import inside the
+# consuming functions so cheap library users (e.g. sd_health.py's CKPT
+# summariser) can import this module without those deps installed.
 
 # =====================================================================
 # %CKPT parsing + intra-file gap inference (library functions).
@@ -142,6 +145,7 @@ def compute_intra_file_gaps(ckpts, sf, jitter_tolerance_samples=5):
 
 
 def sc_interp1d_nan(y, m = 'pchip', extrapolate = False):
+  from scipy.interpolate import interp1d, CubicSpline, PchipInterpolator, Akima1DInterpolator
   y = np.array(y)
   x = np.arange(len(y))
   nan_indices = np.isnan(y); y_interp = []
@@ -325,7 +329,8 @@ def process_file(file_path, n_ch = 8, n_acc = 3, sf = 250, verbose=False,
         return result, stops, stops_at
 
 def obci_bdf(bci_signals, sf, channels, user, gender, dts, birthday, gain, electrode, activity, device):
-    header = highlevel.make_header(patientname=user, gender=gender, equipment=device + ', ' + activity, 
+    from pyedflib import highlevel
+    header = highlevel.make_header(patientname=user, gender=gender, equipment=device + ', ' + activity,
       startdate = dts, birthdate = datetime.datetime.strptime(birthday, cfg['sql_dt_format']))
     total_samples = math.floor(len(bci_signals) / sf)
     signals = []; signal_headers = []
@@ -493,6 +498,7 @@ if __name__ == "__main__":
         header, signal_headers, signals, processed = obci_bdf(bci_signals, settings['sf'], settings['channels'], user, gender, dts, birthday, settings['gain'], settings['electrode'], settings['activity'], settings['device'])
         file_bdf = os.path.join(cfg['data_dir'],
            file_name + '_' + dts.strftime(cfg['file_dt_format']) + '.bdf')
+        from pyedflib import highlevel
         res = highlevel.write_edf(file_bdf, signals, signal_headers, header)
         if res:
             print(f'BDF saved to {file_bdf}')
@@ -513,3 +519,25 @@ if __name__ == "__main__":
                 for row in zip(*signals):
                     writer.writerow(row)
                 print(f'CSV saved to {file_csv}')
+
+        # Morning SD health check (ROADMAP item — write+verify probe +
+        # %CKPT summary → HEALTHY/DEGRADING/DYING verdict + SdHealth row).
+        # Default ON; disable per-yml with `sd_health: false` if needed
+        # (e.g. SD already pulled out for transfer before sd_convert runs).
+        if cfg.get('sd_health', True):
+            try:
+                import sd_health
+                v, n, live, ckpt, report = sd_health.run_health_check(
+                    cfg['sd_dir'],
+                    txt_file=file_path,
+                    session_db=os.path.join(cfg['session_dir'], cfg['session_file']),
+                    payload_mb=int(cfg.get('sd_health_payload_mb', 1)),
+                    chunk_kb=int(cfg.get('sd_health_chunk_kb', 8)),
+                )
+                print('')
+                print(report)
+            except Exception as e:
+                # Health check is advisory; never let it block BDF
+                # production. Surface the error so the morning user can
+                # decide whether to investigate.
+                print(f'WARN: sd_health check failed: {e}')

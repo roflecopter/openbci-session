@@ -538,6 +538,9 @@ if __name__ == "__main__":
                 print(report)
             except Exception as e:
                 # Health check is advisory; never let it block BDF
-                # production. Surface the error so the morning user can
-                # decide whether to investigate.
+                # production. Surface the error AND the traceback so
+                # the morning user can diagnose the bug 3 mornings later
+                # rather than re-reproduce from a bare exception string.
+                import traceback
                 print(f'WARN: sd_health check failed: {e}')
+                traceback.print_exc()

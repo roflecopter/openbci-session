@@ -48,8 +48,8 @@ class TestDefaults(unittest.TestCase):
     def test_default_tune_matches_firmware(self):
         d = th.default_tune()
         self.assertEqual(d['max_resumes'], 25)
-        self.assertEqual(d['ext_recovery_ms'], 8000)
-        self.assertEqual(d['ext_chunk_ms'], 500)
+        self.assertEqual(d['ext_recovery_window_ms'], 8000)
+        self.assertEqual(d['ext_recovery_chunk_ms'], 500)
         self.assertEqual(d['ckpt_interval_ms'], 60000)
         self.assertEqual(d['sd_write_timeout'], 1500)
 
@@ -64,7 +64,7 @@ class TestMergeTune(unittest.TestCase):
 
     def test_other_keys_keep_defaults(self):
         result = th.merge_tune({'max_resumes': 10})
-        self.assertEqual(result['ext_recovery_ms'], 8000)
+        self.assertEqual(result['ext_recovery_window_ms'], 8000)
 
     def test_unknown_key_rejected(self):
         with self.assertRaisesRegex(ValueError, 'unknown tune key'):
@@ -86,9 +86,9 @@ class TestBuildTCommand(unittest.TestCase):
         self.assertEqual(th.build_t_command('max_resumes', 25),
                          b'T\x01\x19')
 
-    def test_ext_recovery_ms_lsb_first(self):
+    def test_ext_recovery_window_ms_lsb_first(self):
         # value 8000 = 0x1F40 → LSB first 0x40 0x1F
-        self.assertEqual(th.build_t_command('ext_recovery_ms', 8000),
+        self.assertEqual(th.build_t_command('ext_recovery_window_ms', 8000),
                          b'T\x02\x40\x1F')
 
     def test_ckpt_interval_ms_uint32(self):
@@ -117,12 +117,12 @@ class TestBuildTuneTextLine(unittest.TestCase):
             'sd_write_timeout': 1500,
             'max_resumes': 25,
             'ckpt_interval_ms': 60000,
-            'ext_chunk_ms': 500,
-            'ext_recovery_ms': 8000,
+            'ext_recovery_chunk_ms': 500,
+            'ext_recovery_window_ms': 8000,
         })
         self.assertEqual(
             line,
-            b'%TUNE max_resumes=25 ext_recovery_ms=8000 ext_chunk_ms=500 '
+            b'%TUNE max_resumes=25 ext_recovery_window_ms=8000 ext_recovery_chunk_ms=500 '
             b'ckpt_interval_ms=60000 sd_write_timeout=1500\n')
 
     def test_partial(self):
@@ -132,6 +132,97 @@ class TestBuildTuneTextLine(unittest.TestCase):
     def test_unknown_key(self):
         with self.assertRaisesRegex(ValueError, 'unknown tune key'):
             th.build_tune_text_line({'bogus': 1})
+
+
+class TestStrictCoercion(unittest.TestCase):
+    """Type-strict coercion in merge_tune / parse_tune_arg — review caught
+    these slipping through int() silently."""
+
+    def test_bool_true_rejected(self):
+        # yaml `max_resumes: true` parses as Python True → int(True)==1 → in
+        # range; would silently accept "true" as "1". Reject explicitly.
+        with self.assertRaisesRegex(ValueError, 'bool'):
+            th.merge_tune({'max_resumes': True})
+
+    def test_bool_false_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'bool'):
+            th.merge_tune({'max_resumes': False})
+
+    def test_float_non_integer_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'float'):
+            th.merge_tune({'max_resumes': 10.7})
+
+    def test_float_integer_accepted(self):
+        # yml may parse `25` as float in some loaders; if it's int-valued
+        # (no fractional part) accept.
+        r = th.merge_tune({'max_resumes': 25.0})
+        self.assertEqual(r['max_resumes'], 25)
+
+    def test_none_rejected(self):
+        # yml-empty key produces None — rejected with a clear message.
+        with self.assertRaisesRegex(ValueError, 'NoneType'):
+            th.merge_tune({'max_resumes': None})
+
+    def test_list_value_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'list'):
+            th.merge_tune({'max_resumes': [25]})
+
+    def test_string_with_garbage_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'string'):
+            th.merge_tune({'max_resumes': '10abc'})
+
+
+class TestMergeNonDictSource(unittest.TestCase):
+    """A malformed yml `tune: 5` returns a non-dict that previously raised
+    AttributeError on src.items() — opaque trace. Now raises ValueError."""
+
+    def test_int_source(self):
+        with self.assertRaisesRegex(ValueError, 'must be a dict'):
+            th.merge_tune(5)
+
+    def test_list_source(self):
+        with self.assertRaisesRegex(ValueError, 'must be a dict'):
+            th.merge_tune(['max_resumes', 25])
+
+    def test_string_source(self):
+        with self.assertRaisesRegex(ValueError, 'must be a dict'):
+            th.merge_tune('max_resumes=25')
+
+    def test_none_source_ok(self):
+        # None means "no override" — should be silently skipped, not
+        # raise. Tests the existing behaviour stays.
+        self.assertEqual(th.merge_tune(None), th.default_tune())
+
+    def test_empty_dict_ok(self):
+        self.assertEqual(th.merge_tune({}), th.default_tune())
+
+
+class TestCrossKeyConstraint(unittest.TestCase):
+    """chunk ≤ window is a firmware-side constraint (applyTune rejects
+    chunk > window). Mirror it host-side so a bad combination fails
+    cleanly BEFORE the board is touched, not mid-batch."""
+
+    def test_chunk_below_window_ok(self):
+        r = th.merge_tune({'ext_recovery_window_ms': 4000,
+                           'ext_recovery_chunk_ms': 500})
+        self.assertEqual(r['ext_recovery_chunk_ms'], 500)
+
+    def test_chunk_equal_window_ok(self):
+        r = th.merge_tune({'ext_recovery_window_ms': 4000,
+                           'ext_recovery_chunk_ms': 4000})
+        self.assertEqual(r['ext_recovery_chunk_ms'], 4000)
+
+    def test_chunk_exceeds_window_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'chunk_ms=5000'):
+            th.merge_tune({'ext_recovery_window_ms': 3000,
+                           'ext_recovery_chunk_ms': 5000})
+
+    def test_defaults_satisfy_constraint(self):
+        # 500 ≤ 8000 by design; sanity-pin so changing defaults can't
+        # silently introduce an invalid baseline.
+        d = th.default_tune()
+        self.assertLessEqual(d['ext_recovery_chunk_ms'],
+                             d['ext_recovery_window_ms'])
 
 
 class TestEndToEnd(unittest.TestCase):

@@ -24,10 +24,13 @@ _ap.add_argument('--activity', '-a', type=int, default=None,
 _ap.add_argument('--tune', action='append', default=[],
                  metavar='KEY=VALUE',
                  help='Override a runtime tunable for this session. Repeatable. '
-                      'Keys: max_resumes, ext_recovery_ms, ext_chunk_ms, '
-                      'ckpt_interval_ms, sd_write_timeout. Overlays yml `tune:` '
-                      'block; both are merged on top of firmware defaults.')
-_args, _ = _ap.parse_known_args()
+                      'Keys: max_resumes, ext_recovery_window_ms, '
+                      'ext_recovery_chunk_ms, ckpt_interval_ms, sd_write_timeout. '
+                      'Overlays yml `tune:` block; both are merged on top of '
+                      'firmware defaults.')
+# parse_args (not parse_known_args) — silently-ignored CLI typos hide
+# tunable overrides the user thought they set.
+_args = _ap.parse_args()
 
 
 def find_openbci_port():
@@ -307,29 +310,38 @@ durations = {'5M':'A','15M':'S','30M':'F','1H':'G','2H':'H','4H':'J','12H':'K','
 # sdPersistProcess was resolved by gating P state-0 entry on sdMetaState==0).
 # Set WR_SESSION_PERSIST=0 to disable the SESSION.TXT write if a regression
 # ever shows up — the underlying session will still record without it.
-# Apply runtime tunables (firmware T-protocol). One T command per non-default
-# value; the firmware acks each with `TUNE OK <key_id>` or `TUNE FAIL <code>`.
-# Order before P so the SESSION.TXT write itself uses the fresh tuning state
-# (cosmetic — only MAX_RESUMES gates anything in the SESSION.TXT-write path,
-# but consistency makes the wire trace easier to reason about). Skip the
-# whole step if every tunable is at the firmware default — no point burning
-# round-trips just to confirm 25=25.
-_defaults = tune_helpers.default_tune()
-_tune_diff = {k: v for k, v in tune.items() if v != _defaults[k]}
-if _tune_diff:
-    print(f'sending {len(_tune_diff)} non-default tune(s): {_tune_diff}')
-    for _kname, _kval in _tune_diff.items():
-        _t_cmd = tune_helpers.build_t_command(_kname, _kval)
-        drain_serial()
-        board.ser.write(_t_cmd)
-        _t_ack = wait_for_response(timeout=2.0)
-        _key_id = _t_cmd[1]
-        if re.search(r'TUNE OK ' + str(_key_id) + r'\b', _t_ack):
-            print(f'tune {_kname}={_kval}: OK')
-        else:
-            print(f'WARNING: tune {_kname}={_kval} not confirmed. '
-                  f'response: {_t_ack!r}. Firmware likely rejected or '
-                  f'pre-tune-protocol. Continuing — value stays at firmware default.')
+# Apply runtime tunables (firmware T-protocol). One T command per key —
+# ALL FIVE always sent, even if a value equals the firmware default, because:
+#   1. The firmware's RAM tunables persist across host reconnections within
+#      a single power cycle. If a prior `--tune ckpt_interval_ms=10000` run
+#      tuned the board and this run requests the default 60000, skipping
+#      the T command leaves the board on the prior 10000 — silent state
+#      drift between %META (which records `tune`, the post-merge dict) and
+#      actual firmware behaviour.
+#   2. Five round-trips at ~5 ms each is ~25 ms total — invisible relative
+#      to the rest of the session-start sequence.
+#
+# Ack is mandatory. On TUNE FAIL or no-ack: sys.exit before any other
+# command runs. Single-user paranoid setup — better to halt and let the
+# operator notice than to record a night on a partially-applied tune that
+# the %META block claims is fully active. (Pre-tune-protocol firmware will
+# silently activate CHANNEL_ON_13 on the leading 'T' byte; the no-ack
+# branch catches that and aborts before any recording state is built up.)
+for _kname, _kval in tune.items():
+    _t_cmd = tune_helpers.build_t_command(_kname, _kval)
+    _key_id = tune_helpers.TUNE_KEYS[_kname][0]
+    drain_serial()
+    board.ser.write(_t_cmd)
+    _t_ack = wait_for_response(timeout=2.0)
+    if not re.search(r'TUNE OK ' + str(_key_id) + r'\b', _t_ack):
+        sys.exit(
+            f'TUNE FAIL: firmware did not ack {_kname}={_kval} (key id '
+            f'0x{_key_id:02x}). response: {_t_ack!r}. Either the firmware '
+            f'pre-dates the tune protocol (re-flash from '
+            f'OpenBCI_Cyton_Library_SD master), or the value is out of '
+            f'range, or there is a wire-format mismatch. Aborting before '
+            f'recording state is built up.')
+    print(f'tune {_kname}={_kval}: OK')
 
 if os.environ.get('WR_SESSION_PERSIST', '1') != '0':
     # Build the SESSION.TXT payload. %TUNE line prepended so post-halt

@@ -7,6 +7,19 @@ default:
 
 activity: 1
 
+# Optional firmware tunables (T-protocol + %TUNE in SESSION.TXT). Each value
+# below is the firmware default; override only the keys you want changed and
+# the rest stay at default. CLI flag `--tune key=value` (repeatable) overlays
+# this block per-run. Out-of-range values are rejected before the board is
+# touched. Cross-key constraint: ext_recovery_chunk_ms ≤ ext_recovery_window_ms.
+# Omit the whole block entirely to use firmware defaults.
+# tune:
+#   max_resumes:            25      # 1..254  resume cap (EEPROM[7])
+#   ext_recovery_window_ms: 8000    # 1..60000  extended in-place recovery window
+#   ext_recovery_chunk_ms:  500     # 10..5000  per-retry chunk (≤ window)
+#   ckpt_interval_ms:       60000   # 1000..3600000  %CKPT heartbeat interval
+#   sd_write_timeout:       1500    # 100..5000  per-block SD write timeout
+
 electrodes:
   1: Gold Cup OpenBCI, Ten20
   2: Premium Ag/AgCl FRI, Sigma Gel

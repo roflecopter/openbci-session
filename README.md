@@ -97,6 +97,27 @@ The script previously used fixed `time.sleep` between every protocol command, wh
 
 End-to-end this typically cuts session start to ~15s. The 12H-slot SD allocation step uses `timeout=60.0` because pre-erase on slow SD cards can take 6–25s.
 
+## Runtime tunables (firmware T-protocol + %TUNE in SESSION.TXT)
+Added 2026-05-15. Five firmware recovery thresholds (`max_resumes`, `ext_recovery_window_ms`, `ext_recovery_chunk_ms`, `ckpt_interval_ms`, `sd_write_timeout`) are now overridable per session without reflashing the cyton. Useful for A/B testing per card class.
+
+* **yml block** (optional, in `session_start.yml`):
+  ```yaml
+  tune:
+    max_resumes:            25
+    ext_recovery_window_ms: 8000
+    ext_recovery_chunk_ms:  500
+    ckpt_interval_ms:       60000
+    sd_write_timeout:       1500
+  ```
+* **CLI override**: `--tune key=value`, repeatable. Overlays yml on top of firmware defaults. Example: `python session_start.py --tune max_resumes=10 --tune sd_write_timeout=2000`.
+* Validation gates before any serial I/O: bool / non-integer-float / out-of-range / non-dict-yml-block / cross-key constraint (`ext_recovery_chunk_ms ≤ ext_recovery_window_ms`) all raise cleanly with a human-readable message via `tune_helpers.merge_tune()`.
+* `tune_helpers.py` is a pure-Python module wrapping the wire-format details; `test_tune_helpers.py` pins the contract (42 unit tests including the new strict-coercion and cross-key checks).
+* `session_start.py` sends ALL FIVE `T` commands every run (not just non-default ones) so a previously-tuned board can't silently retain stale state. Each command waits up to 2 s for `TUNE OK <key_id>$$$`; on FAIL or no-ack, `sys.exit` with a diagnostic message BEFORE any recording state is built up. Pre-tune-protocol firmware (no T parser) would silently activate `CHANNEL_ON_13` on the leading 'T' byte — the no-ack branch catches that immediately.
+* SESSION.TXT always carries a `%TUNE` line at the top of its payload so the firmware's boot-time auto-resume re-applies the same tuning state (binary T commands don't persist across reset). Text key names in the line match the firmware C variable names (`ext_recovery_window_ms` ↔ `tuneExtRecoveryWindowMs`) — no naming asymmetry that would let a typo silently roll back to defaults.
+* The `tune` dict is also added to the `%META` JSON written into the SD TXT file — primary forensic record for which tunables were active. `%CKPT` lines carry a `T=<hex8>` FNV-1a summary hash that should match the meta value for that session.
+
+Firmware-side details (key IDs, value widths, valid ranges, wire framing): see `OpenBCI_Cyton_Library_SD/README.md` "Runtime tunable recovery / SD constants" section.
+
 # sd_convert.py
 One file, two roles:
 

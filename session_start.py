@@ -21,7 +21,16 @@ _ap = argparse.ArgumentParser(add_help=True)
 _ap.add_argument('--activity', '-a', type=int, default=None,
                  help='Activity number from session_start.yml activities map '
                       '(overrides yml-configured activity)')
-_args, _ = _ap.parse_known_args()
+_ap.add_argument('--tune', action='append', default=[],
+                 metavar='KEY=VALUE',
+                 help='Override a runtime tunable for this session. Repeatable. '
+                      'Keys: max_resumes, ext_recovery_window_ms, '
+                      'ext_recovery_chunk_ms, ckpt_interval_ms, sd_write_timeout. '
+                      'Overlays yml `tune:` block; both are merged on top of '
+                      'firmware defaults.')
+# parse_args (not parse_known_args) — silently-ignored CLI typos hide
+# tunable overrides the user thought they set.
+_args = _ap.parse_args()
 
 
 def find_openbci_port():
@@ -109,6 +118,17 @@ montages = cfg_base['montages']
 electrodes = cfg_base['electrodes']
 activities = cfg_base['activities']
 activity_chosen = _args.activity if _args.activity is not None else cfg_base['activity']  # CLI override > yml default
+
+# Runtime tunables (firmware T-protocol + %TUNE in SESSION.TXT).
+# Merge order: firmware defaults < yml `tune:` block < --tune CLI flags.
+# Any out-of-range value (per tune_helpers.TUNE_KEYS bounds) raises ValueError
+# before we touch the board, so a typo never reaches recording state.
+import tune_helpers  # local module — pure-Python, no side effects
+_tune_yml = cfg_base.get('tune') or {}
+_tune_cli = dict(tune_helpers.parse_tune_arg(arg) for arg in _args.tune)
+tune = tune_helpers.merge_tune(_tune_yml, _tune_cli)
+if _tune_yml or _tune_cli:
+    print(f'tune (merged): {dict(tune)}')
 
 # extract settings from chosen montage
 activity = activities[activity_chosen]['type'];
@@ -290,8 +310,48 @@ durations = {'5M':'A','15M':'S','30M':'F','1H':'G','2H':'H','4H':'J','12H':'K','
 # sdPersistProcess was resolved by gating P state-0 entry on sdMetaState==0).
 # Set WR_SESSION_PERSIST=0 to disable the SESSION.TXT write if a regression
 # ever shows up — the underlying session will still record without it.
+# Apply runtime tunables (firmware T-protocol). One T command per key —
+# ALL FIVE always sent, even if a value equals the firmware default, because:
+#   1. The firmware's RAM tunables persist across host reconnections within
+#      a single power cycle. If a prior `--tune ckpt_interval_ms=10000` run
+#      tuned the board and this run requests the default 60000, skipping
+#      the T command leaves the board on the prior 10000 — silent state
+#      drift between %META (which records `tune`, the post-merge dict) and
+#      actual firmware behaviour.
+#   2. Five round-trips at ~5 ms each is ~25 ms total — invisible relative
+#      to the rest of the session-start sequence.
+#
+# Ack is mandatory. On TUNE FAIL or no-ack: sys.exit before any other
+# command runs. Single-user paranoid setup — better to halt and let the
+# operator notice than to record a night on a partially-applied tune that
+# the %META block claims is fully active. (Pre-tune-protocol firmware will
+# silently activate CHANNEL_ON_13 on the leading 'T' byte; the no-ack
+# branch catches that and aborts before any recording state is built up.)
+for _kname, _kval in tune.items():
+    _t_cmd = tune_helpers.build_t_command(_kname, _kval)
+    _key_id = tune_helpers.TUNE_KEYS[_kname][0]
+    drain_serial()
+    board.ser.write(_t_cmd)
+    _t_ack = wait_for_response(timeout=2.0)
+    if not re.search(r'TUNE OK ' + str(_key_id) + r'\b', _t_ack):
+        sys.exit(
+            f'TUNE FAIL: firmware did not ack {_kname}={_kval} (key id '
+            f'0x{_key_id:02x}). response: {_t_ack!r}. Either the firmware '
+            f'pre-dates the tune protocol (re-flash from '
+            f'OpenBCI_Cyton_Library_SD master), or the value is out of '
+            f'range, or there is a wire-format mismatch. Aborting before '
+            f'recording state is built up.')
+    print(f'tune {_kname}={_kval}: OK')
+
 if os.environ.get('WR_SESSION_PERSIST', '1') != '0':
-    session_txt_lines = [ch_cmd,
+    # Build the SESSION.TXT payload. %TUNE line prepended so post-halt
+    # auto-resume re-applies the same tunables (binary T commands don't
+    # persist — they only live in RAM until next reset). Always include it
+    # even at defaults so the post-processor can confirm which tunables
+    # were in effect.
+    session_txt_tune_line = tune_helpers.build_tune_text_line(tune).decode('ascii').rstrip('\n')
+    session_txt_lines = [session_txt_tune_line,
+                         ch_cmd,
                          '~' + str(sampling_rates[sampling_rate]),
                          '/0',
                          durations[duration],
@@ -368,7 +428,11 @@ if len(re.findall('Size ', res)) > 0:
         settings = {
             'gain':gain, 'channels':channels, 'sf': sampling_rate,
             'ground': ground, 'electrode': electrode_type, 'emg_ch': emg_channels,
-            'ch_n': ch_n, 'activity': activity, 'device': device, 'note': note}
+            'ch_n': ch_n, 'activity': activity, 'device': device, 'note': note,
+            # Tunables snapshot — primary forensic record for which recovery
+            # parameters were active this session. Post-processor cross-checks
+            # against %CKPT lines' `T=<hex8>` summary hash for confidence.
+            'tune': dict(tune)}
         json_settings = json.dumps(settings)
         meta_obj = {'dts': dts.strftime(cfg["sql_dt_format"]), 'file': sd_file}
         meta_obj.update(settings)

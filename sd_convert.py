@@ -13,6 +13,11 @@ from contextlib import closing
 from pyedflib import highlevel
 from scipy.interpolate import interp1d, CubicSpline, PchipInterpolator, Akima1DInterpolator
 
+# Single-source-of-truth for %CKPT line parsing + intra-file gap inference.
+# Lives in this repo as obci_ckpt.py — also imported by py-qs-data's
+# nightly collect_bci pipeline. See obci_ckpt.py docstring for firmware refs.
+from obci_ckpt import parse_ckpt_line, compute_intra_file_gaps
+
 # config, if relative path not working then use explicit path to working dir (repo dir with scripts and yml) or modify working directory in IDE/GUI settings
 # working_dir = '/path/to/openbci-session'
 working_dir = os.getcwd()
@@ -120,10 +125,33 @@ def process_line(split_line, n_ch, n_acc):
         values_array.append(value)
     return values_array
 
-def process_file(file_path, n_ch = 8, n_acc = 3, sf = 250, verbose=False):
+def process_file(file_path, n_ch = 8, n_acc = 3, sf = 250, verbose=False,
+                 return_ckpts=False):
+    """Parse one OBCI_*.TXT into a list of `[ch1..ch_n, acc_x, acc_y, acc_z]`
+    sample rows, plus stop-marker bookkeeping.
+
+    Default return: `(result, stops, stops_at)` — unchanged from pre-2026-05-14.
+
+    When `return_ckpts=True`: returns `(result, stops, stops_at, ckpts)` where
+    `ckpts` is a list of dicts (one per `%CKPT` line found), each containing
+    parsed `t/b/e/r/n/o/x` int fields plus a `sample_idx` key holding the
+    count of data samples in `result` AT THE MOMENT the `%CKPT` line was
+    encountered (i.e. the post-CKPT sample stream starts at index sample_idx).
+
+    The `sample_idx` field is what makes downstream `compute_intra_file_gaps`
+    possible: between two consecutive `%CKPT`s we know both the wall-clock
+    delta (Δt_ms) and the data-sample delta (Δsample_idx) — divergence beyond
+    sample-period jitter implies samples were dropped during inline SD
+    recovery and lets us zero-pad the gap to keep wall-clock alignment stable.
+
+    Pre-2026-05-08 firmware emits no `%CKPT` lines — `ckpts` returns [] and
+    downstream gap inference is a no-op. Post-2026-05-08 firmware emits one
+    `%CKPT` line ~every 60 s at sample boundaries.
+    """
     with open(file_path, 'r') as file:
         file = open(file_path, 'r')
         result = []
+        ckpts = [] if return_ckpts else None
         i = 0
         stops_n = 0
         stops = []
@@ -139,6 +167,17 @@ def process_file(file_path, n_ch = 8, n_acc = 3, sf = 250, verbose=False):
             if line.startswith('%META '):  # firmware-embedded metadata, skip from data path
                 i += 1
                 continue
+            if ckpts is not None and line.startswith('%CKPT '):
+                # Record sample_idx BEFORE the generic single-%-line branch
+                # below also bumps `stops`. parse_ckpt_line returns None on a
+                # truncated/garbage %CKPT line — we still add the stop entry
+                # in the branch below so existing stops-list consumers don't
+                # see a hole, we just skip the ckpts record.
+                parsed = parse_ckpt_line(line)
+                if parsed is not None:
+                    parsed['sample_idx'] = len(result)
+                    ckpts.append(parsed)
+                # fall through to stops bookkeeping
             split_line = line.strip().split(',')
             if split_line[0].startswith('%Total time'):
                 print(f'recording full at {i} / {line}')
@@ -176,6 +215,8 @@ def process_file(file_path, n_ch = 8, n_acc = 3, sf = 250, verbose=False):
                     print(f"Processing... {i/(sf*60)}m, n_samples: {len(result)}, last:{result[-1]}")
             if i % (sf*600)== 0:
                 print(f'Processing... {round(i/(sf*60))}m, n_samples: {len(result)}, last:{result[-1]}')
+        if return_ckpts:
+            return result, stops, stops_at, ckpts
         return result, stops, stops_at
 
 def obci_bdf(bci_signals, sf, channels, user, gender, dts, birthday, gain, electrode, activity, device):

@@ -102,6 +102,10 @@ Script to convert OpenBCI SD card .TXT files to
 * 24-bit BDF with calibrated values. Accelerometer data is upsampled to match ADS sampling rate.
 * Recording timestamp and settings resolved in priority order (see "Firmware-embedded %META"): (1) `%META` line in the TXT itself, (2) sqlite `Sessions` row written by session_start.py, (3) defaults.
 * Config: setup sd_dir (openbci sd card mountpoint, e.g. /Volumes/OBCI for mac), data_dir (for output files) and session_dir (must be equal to session_start.yml) and basic user data
+* `process_file(...)` accepts an opt-in `return_ckpts=True` kwarg — returns `(result, stops, stops_at, ckpts)` with one parsed `%CKPT` dict per heartbeat plus its `sample_idx`. Pair with `obci_ckpt.compute_intra_file_gaps(ckpts, sf)` to locate intra-file SD-recovery sample drops and zero-pad them so wall-clock alignment stays stable across the file. Default return shape unchanged — existing callers don't need updates.
+
+# obci_ckpt.py — shared %CKPT parsing + gap inference
+Single source of truth for the `%CKPT` heartbeat line format and the algorithm that infers intra-file sample-drop windows from consecutive heartbeats. Used by `sd_convert.py` here AND by the private `py-qs-data` nightly pipeline (collect_bci) — both stay in lock-step on the firmware's evolving counter set (`t/b/e/r/n/o/x` as of 2026-05-13). See the docstrings in `obci_ckpt.py` for field semantics + the firmware repo's README "SD reliability and observability" section for the corresponding firmware behaviour.
 
 # Firmware-embedded `%META` line (modded firmware required)
 Recordings made with the modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) carry their own settings inside the SD TXT. session_start.py builds the JSON, sends it via the firmware's `M`-prefixed raw-write protocol (`'M' <lenLo> <lenHi> <up to 1024 payload bytes>`) BEFORE issuing `b` (start stream), and the firmware writes it to its own SD block (newline-padded) so it can never interleave with sample data. After the write, the firmware acks `META OK <len> <sum>` (16-bit byte sum) which session_start.py verifies against the payload it sent — on mismatch or `META FAIL` the host retries once and otherwise prints a warning and continues.
@@ -121,18 +125,21 @@ Benefit: SD card files become self-describing. You can re-process a TXT on any m
 # BLOCK_DIV auto-detect
 The firmware's `BLOCK_DIV` controls how many SD blocks per second are pre-allocated; correct value is 1 for 16-channel daisy and 2 for 8-channel cyton-only. The modded firmware now auto-picks based on `board.daisyPresent` at SD setup time, so the requested duration label finally matches the actual recording length (e.g. 12H slot at 500 Hz cyton-only used to overshoot to ~24H of allocation; now sized correctly to ~12H = 1.24 GB). session_start.py mirrors the same calc when it reports back the SD's max duration. An explicit `c` / `C` host command from session_start still overrides via a `sdBlockDivManual` flag.
 
-# SD-error retry + `%E` markers (modded firmware)
+# SD-error retry + `%E` markers + `%CKPT` heartbeat (modded firmware)
 Documented OpenBCI 1-in-50 silent-empty-recording bug — the SD card occasionally fails one multi-block write mid-recording and the original firmware just kept going, sometimes losing the rest of the recording.
 
-The modded firmware now:
-* Retries the failed `card.writeData()` once via `writeStop` + `writeStart` from the same block.
-* On persistent failure, realigns the multi-block pointer to the NEXT block so subsequent writes target the right position. The failed block stays as pre-erased whitespace.
-* Writes a `%E` marker line into the next-good block so post-processing can locate the gap.
-* Counts `sdErrs` and `sdRetries` and emits them in the SD footer alongside the existing `%Over:`.
-* Drives the on-board LED into a fast `100ms ON / 300ms OFF` strobe on first SD error (visibly distinct from the normal SD-write blink).
-* If the failure happens during the `%META` payload, the host gets `META FAIL` instead of `META OK` and resends.
+The modded firmware uses a 5-tier recovery cascade (see firmware README):
+* Same-block retry → 5x skip-forward `writeStart` retries → one `card.init()+writeStart` → 8 s extended-window retry loop (added 2026-05-13) → `executeSoftReset` to allocate the next slot file (added 2026-05-12, bounded by `MAX_RESUMES=25`).
+* `%E` marker line emitted on the next-good block so post-processing can locate the gap.
+* `%CKPT t=<ms> b=<block> e=<errs> r=<retries> n=<reinits> o=<over> x=<extretries>` heartbeat ~once/min — the input `obci_ckpt.compute_intra_file_gaps()` consumes for sample-drop inference.
+* Footer carries running counters: `%Errors:`, `%Retries:`, `%Reinits:`, `%ExtRetries:` (alongside existing `%Over:`).
+* `ledSDError` fast strobe on first SD error, **auto-clears at next clean `%CKPT`** so morning state reflects current health, not history.
+* `ledReplayFail` distinct double-flash + `REPLAYFL.TXT` forensic file when boot-time SESSION.TXT auto-resume fails.
+* `META FAIL` instead of `META OK` if the failure hits during the `%META` payload — host resends.
 
 `%E` markers are deferred while the firmware is mid-`%META` write so they can never fragment the JSON line.
+
+Full firmware design + per-tier semantics + tested card classes: see [`OpenBCI_Cyton_Library_SD/README.md`](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD).
 
 # session_analyse.py
 Script to analyses recorded sessions. Suited for short sessions (like meditations etc).

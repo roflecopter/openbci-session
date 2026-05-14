@@ -21,6 +21,12 @@ _ap = argparse.ArgumentParser(add_help=True)
 _ap.add_argument('--activity', '-a', type=int, default=None,
                  help='Activity number from session_start.yml activities map '
                       '(overrides yml-configured activity)')
+_ap.add_argument('--tune', action='append', default=[],
+                 metavar='KEY=VALUE',
+                 help='Override a runtime tunable for this session. Repeatable. '
+                      'Keys: max_resumes, ext_recovery_ms, ext_chunk_ms, '
+                      'ckpt_interval_ms, sd_write_timeout. Overlays yml `tune:` '
+                      'block; both are merged on top of firmware defaults.')
 _args, _ = _ap.parse_known_args()
 
 
@@ -109,6 +115,17 @@ montages = cfg_base['montages']
 electrodes = cfg_base['electrodes']
 activities = cfg_base['activities']
 activity_chosen = _args.activity if _args.activity is not None else cfg_base['activity']  # CLI override > yml default
+
+# Runtime tunables (firmware T-protocol + %TUNE in SESSION.TXT).
+# Merge order: firmware defaults < yml `tune:` block < --tune CLI flags.
+# Any out-of-range value (per tune_helpers.TUNE_KEYS bounds) raises ValueError
+# before we touch the board, so a typo never reaches recording state.
+import tune_helpers  # local module — pure-Python, no side effects
+_tune_yml = cfg_base.get('tune') or {}
+_tune_cli = dict(tune_helpers.parse_tune_arg(arg) for arg in _args.tune)
+tune = tune_helpers.merge_tune(_tune_yml, _tune_cli)
+if _tune_yml or _tune_cli:
+    print(f'tune (merged): {dict(tune)}')
 
 # extract settings from chosen montage
 activity = activities[activity_chosen]['type'];
@@ -290,8 +307,39 @@ durations = {'5M':'A','15M':'S','30M':'F','1H':'G','2H':'H','4H':'J','12H':'K','
 # sdPersistProcess was resolved by gating P state-0 entry on sdMetaState==0).
 # Set WR_SESSION_PERSIST=0 to disable the SESSION.TXT write if a regression
 # ever shows up — the underlying session will still record without it.
+# Apply runtime tunables (firmware T-protocol). One T command per non-default
+# value; the firmware acks each with `TUNE OK <key_id>` or `TUNE FAIL <code>`.
+# Order before P so the SESSION.TXT write itself uses the fresh tuning state
+# (cosmetic — only MAX_RESUMES gates anything in the SESSION.TXT-write path,
+# but consistency makes the wire trace easier to reason about). Skip the
+# whole step if every tunable is at the firmware default — no point burning
+# round-trips just to confirm 25=25.
+_defaults = tune_helpers.default_tune()
+_tune_diff = {k: v for k, v in tune.items() if v != _defaults[k]}
+if _tune_diff:
+    print(f'sending {len(_tune_diff)} non-default tune(s): {_tune_diff}')
+    for _kname, _kval in _tune_diff.items():
+        _t_cmd = tune_helpers.build_t_command(_kname, _kval)
+        drain_serial()
+        board.ser.write(_t_cmd)
+        _t_ack = wait_for_response(timeout=2.0)
+        _key_id = _t_cmd[1]
+        if re.search(r'TUNE OK ' + str(_key_id) + r'\b', _t_ack):
+            print(f'tune {_kname}={_kval}: OK')
+        else:
+            print(f'WARNING: tune {_kname}={_kval} not confirmed. '
+                  f'response: {_t_ack!r}. Firmware likely rejected or '
+                  f'pre-tune-protocol. Continuing — value stays at firmware default.')
+
 if os.environ.get('WR_SESSION_PERSIST', '1') != '0':
-    session_txt_lines = [ch_cmd,
+    # Build the SESSION.TXT payload. %TUNE line prepended so post-halt
+    # auto-resume re-applies the same tunables (binary T commands don't
+    # persist — they only live in RAM until next reset). Always include it
+    # even at defaults so the post-processor can confirm which tunables
+    # were in effect.
+    session_txt_tune_line = tune_helpers.build_tune_text_line(tune).decode('ascii').rstrip('\n')
+    session_txt_lines = [session_txt_tune_line,
+                         ch_cmd,
                          '~' + str(sampling_rates[sampling_rate]),
                          '/0',
                          durations[duration],
@@ -368,7 +416,11 @@ if len(re.findall('Size ', res)) > 0:
         settings = {
             'gain':gain, 'channels':channels, 'sf': sampling_rate,
             'ground': ground, 'electrode': electrode_type, 'emg_ch': emg_channels,
-            'ch_n': ch_n, 'activity': activity, 'device': device, 'note': note}
+            'ch_n': ch_n, 'activity': activity, 'device': device, 'note': note,
+            # Tunables snapshot — primary forensic record for which recovery
+            # parameters were active this session. Post-processor cross-checks
+            # against %CKPT lines' `T=<hex8>` summary hash for confidence.
+            'tune': dict(tune)}
         json_settings = json.dumps(settings)
         meta_obj = {'dts': dts.strftime(cfg["sql_dt_format"]), 'file': sd_file}
         meta_obj.update(settings)

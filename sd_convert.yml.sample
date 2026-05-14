@@ -12,5 +12,13 @@ default:
     birthday: 1980-01-01 12:00:00
     brand: OpenBCI
     save_csv: False
+
+    # Morning SD health check (sd_health.py). When True (default), after
+    # BDF write the script runs a 1 MB write+verify probe on sd_dir and
+    # parses last night's %CKPT counters to produce a HEALTHY / DEGRADING
+    # / DYING verdict, persisted to sessions.db as the SdHealth table.
+    sd_health: True
+    sd_health_payload_mb: 1
+    sd_health_chunk_kb: 8
     
     

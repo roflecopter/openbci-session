@@ -341,7 +341,7 @@ def obci_bdf(bci_signals, sf, channels, user, gender, dts, birthday, gain, elect
             acc_interpolated = sc_interp1d_nan(channel_data, m = 'np_linear')
             accelScale = 0.002 / (pow (2, 4));
             signals.append(acc_interpolated * accelScale)
-            signal_headers.append({"label": channel, "dimension": "g", "sample_rate": sf, "sample_frequency": sf, 'physical_max': acc_ph_max, 'physical_min': acc_ph_min, 'digital_max': acc_dig_max, 'digital_min': acc_dig_min, 'transducer': 'MEMS', 'prefilter': ''})
+            signal_headers.append({"label": channel, "dimension": "g", "sample_frequency": sf, 'physical_max': acc_ph_max, 'physical_min': acc_ph_min, 'digital_max': acc_dig_max, 'digital_min': acc_dig_min, 'transducer': 'MEMS', 'prefilter': ''})
         else: 
             # EEG
             # https://openbci.com/forum/index.php?p=/discussion/comment/8122
@@ -351,7 +351,7 @@ def obci_bdf(bci_signals, sf, channels, user, gender, dts, birthday, gain, elect
             channel_data[channel_data > ch_ph_max] = ch_ph_max
             channel_data[channel_data < ch_ph_min] = ch_ph_min
             signals.append(channel_data)
-            signal_headers.append({"label": channel, "dimension": "uV", "sample_rate": sf, "sample_frequency": sf, 'physical_max': ch_ph_max, 'physical_min': ch_ph_min, 'digital_max': ch_dig_max, 'digital_min': ch_dig_min, 'transducer': electrode, 'prefilter': ''})
+            signal_headers.append({"label": channel, "dimension": "uV", "sample_frequency": sf, 'physical_max': ch_ph_max, 'physical_min': ch_ph_min, 'digital_max': ch_dig_max, 'digital_min': ch_dig_min, 'transducer': electrode, 'prefilter': ''})
         processed = len(channel_data)
     return([header, signal_headers, signals, processed])
 

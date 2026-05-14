@@ -98,14 +98,19 @@ The script previously used fixed `time.sleep` between every protocol command, wh
 End-to-end this typically cuts session start to ~15s. The 12H-slot SD allocation step uses `timeout=60.0` because pre-erase on slow SD cards can take 6–25s.
 
 # sd_convert.py
-Script to convert OpenBCI SD card .TXT files to 
+One file, two roles:
+
+**As a CLI** — convert OpenBCI SD card .TXT files to:
 * 24-bit BDF with calibrated values. Accelerometer data is upsampled to match ADS sampling rate.
 * Recording timestamp and settings resolved in priority order (see "Firmware-embedded %META"): (1) `%META` line in the TXT itself, (2) sqlite `Sessions` row written by session_start.py, (3) defaults.
 * Config: setup sd_dir (openbci sd card mountpoint, e.g. /Volumes/OBCI for mac), data_dir (for output files) and session_dir (must be equal to session_start.yml) and basic user data
-* `process_file(...)` accepts an opt-in `return_ckpts=True` kwarg — returns `(result, stops, stops_at, ckpts)` with one parsed `%CKPT` dict per heartbeat plus its `sample_idx`. Pair with `obci_ckpt.compute_intra_file_gaps(ckpts, sf)` to locate intra-file SD-recovery sample drops and zero-pad them so wall-clock alignment stays stable across the file. Default return shape unchanged — existing callers don't need updates.
+* CLI driver runs only when invoked directly (`python sd_convert.py`) — gated behind `if __name__ == "__main__":` so the module can also be imported as a library without side effects.
 
-# obci_ckpt.py — shared %CKPT parsing + gap inference
-Single source of truth for the `%CKPT` heartbeat line format and the algorithm that infers intra-file sample-drop windows from consecutive heartbeats. Used by `sd_convert.py` here AND by the private `py-qs-data` nightly pipeline (collect_bci) — both stay in lock-step on the firmware's evolving counter set (`t/b/e/r/n/o/x` as of 2026-05-13). See the docstrings in `obci_ckpt.py` for field semantics + the firmware repo's README "SD reliability and observability" section for the corresponding firmware behaviour.
+**As a library** — `process_file()`, `parse_ckpt_line()`, `compute_intra_file_gaps()` are top-level functions and the canonical implementation of the firmware's `%CKPT` heartbeat format and the SD-recovery gap-inference algorithm. Imported as a library by the private `py-qs-data` nightly pipeline (collect_bci) so both pipelines stay in lock-step on the firmware's evolving counter set (`t/b/e/r/n/o/x` as of 2026-05-13). Works on stock-firmware files too — pre-2026-05-08 recordings have no `%CKPT` lines so `parse_ckpt_line` is a no-op there and gap inference returns `[]`.
+
+`process_file(file_path, ..., return_ckpts=True)` returns the new 4-tuple `(result, stops, stops_at, ckpts)` where each ckpt dict carries `t/b/e/r/n/o/x` ints plus a `sample_idx` field. Feed that into `compute_intra_file_gaps(ckpts, sf)` to locate intra-file SD-recovery sample drops and zero-pad them so wall-clock alignment stays stable across the file. Default return shape unchanged — existing callers don't need updates.
+
+See the docstrings in `sd_convert.py` for field semantics and the firmware repo's README "SD reliability and observability" section for the corresponding firmware behaviour.
 
 # Firmware-embedded `%META` line (modded firmware required)
 Recordings made with the modded [firmware](https://github.com/roflecopter/OpenBCI_Cyton_Library_SD) carry their own settings inside the SD TXT. session_start.py builds the JSON, sends it via the firmware's `M`-prefixed raw-write protocol (`'M' <lenLo> <lenHi> <up to 1024 payload bytes>`) BEFORE issuing `b` (start stream), and the firmware writes it to its own SD block (newline-padded) so it can never interleave with sample data. After the write, the firmware acks `META OK <len> <sum>` (16-bit byte sum) which session_start.py verifies against the payload it sent — on mismatch or `META FAIL` the host retries once and otherwise prints a warning and continues.
